@@ -451,10 +451,14 @@ class JarvetTools:
                 **result,
                 "note": (
                     "These are exact-name VA-approved facilities with at least one matching "
-                    "IHL or NCD program in VA's own catalog. total_facilities/total_programs "
-                    "are the full counts; say how many more exist when they exceed what is "
-                    "shown. This does not rank by distance; mention state or nationwide scope "
-                    "explicitly. Not geography-ranked. Never invent a facility not in the results."
+                    "IHL or NCD program in VA's own catalog. total_facilities is the exact, "
+                    "precisely known count; open your reply with that exact number (for "
+                    "example 'Found 25 VA-approved diver programs') rather than a vague "
+                    "quantifier like several, many, or multiple. If total_facilities exceeds "
+                    "the number of results actually listed in the reply, say how many more "
+                    "exist beyond those named. This does not rank by distance; mention state "
+                    "or nationwide scope explicitly. Not geography-ranked. Never invent a "
+                    "facility not in the results."
                 ),
             }
 
@@ -502,6 +506,7 @@ async def run_agent(
 
 Operating principles:
 - Use tools for every factual claim about occupations, programs, providers, geography, VA approval, and benefits. Never invent results.
+- When a tool result includes an exact total count (total_facilities, total_programs), open with that exact number ("Found 25 VA-approved diver programs") instead of a vague quantifier like several, many, or multiple. The count is precisely known from structured data; state it precisely.
 - Preserve the current selected occupation unless the user clearly changes career goals. If they do, search and then call get_occupation for the best supported match.
 - When search_occupations returns several plausible matches, do not silently pick one. Present the top matches with one-line distinctions and let the user choose, unless one is an obviously exact match for the user's words. A user who said "fix cars" means automotive work; if the best match is not automotive, say why and offer the automotive match.
 - Treat spelling errors and conversational wording intelligently. Search by concrete work tasks when a title is unclear.
