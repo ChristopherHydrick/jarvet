@@ -428,25 +428,14 @@ class JarvetTools:
             # schema's declared default, silently truncating "show me all"
             # requests. Always return the full result set up to this ceiling.
             result = self.va.programs_for(program, state=state, limit=100)
-            # Live-enrich only the top few results (housing rate, GI Bill
-            # student count, contact) to avoid one live VA API round trip per
-            # result on a nationwide search; the rest keep only the static
-            # workbook fields already in the facility record.
-            enriched = await asyncio.gather(*(
+            # Live-enrich every matched facility (housing rate, GI Bill
+            # student count, contact) concurrently. This means one live VA
+            # API round trip per result, so a broad nationwide search can
+            # take noticeably longer to reply than a narrow one.
+            result["facilities"] = await asyncio.gather(*(
                 self._add_provider_resource(facility)
-                for facility in result["facilities"][:4]
+                for facility in result["facilities"]
             ))
-            result["facilities"][:len(enriched)] = enriched
-            for facility in result["facilities"][len(enriched):]:
-                self._add_resource({
-                    "label": f"View {facility['institution']} in the VA Comparison Tool",
-                    "url": facility["detail_url"],
-                    "inline_labels": [facility["institution"]],
-                    "kind": "provider-details",
-                    "group": str(facility["institution"]).title(),
-                    "action": "VA benefits",
-                    "provider": facility,
-                })
             return {
                 **result,
                 "note": (

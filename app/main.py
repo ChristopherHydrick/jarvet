@@ -26,7 +26,7 @@ va_index = VaComparison(ROOT / ".cache" / "va-comparison.sqlite")
 ipeds_index = IpedsIndex(ROOT / ".cache" / "ipeds.sqlite")
 response_cache = ResponseCache(
     ROOT / ".cache" / "chat-responses.sqlite",
-    version=os.getenv("JARVET_CACHE_VERSION", "17"),
+    version=os.getenv("JARVET_CACHE_VERSION", "18"),
     max_entries=int(os.getenv("JARVET_CACHE_MAX_ENTRIES", "500")),
     ttl_seconds=int(os.getenv("JARVET_CACHE_TTL_SECONDS", "604800")),
 )
