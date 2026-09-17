@@ -655,8 +655,18 @@ class VaComparison:
                 best = self._record(row)
         return best
 
-    @staticmethod
-    def _record(row: sqlite3.Row, distance: float | None = None) -> dict[str, Any]:
+    def _record(self, row: sqlite3.Row, distance: float | None = None) -> dict[str, Any]:
+        guessed_website = None
+        if not row["insturl"]:
+            database = self._database()
+            if database.execute(
+                "SELECT name FROM sqlite_master WHERE name = 'va_website_guesses'"
+            ).fetchone() is not None:
+                guess = database.execute(
+                    "SELECT url FROM va_website_guesses WHERE facility_code = ?",
+                    (row["facility_code"],),
+                ).fetchone()
+                guessed_website = guess[0] if guess else None
         return {
             "facility_code": row["facility_code"],
             "detail_url": (
@@ -672,6 +682,12 @@ class VaComparison:
             "distance_miles": round(distance, 1) if distance is not None else None,
             "monthly_housing_rate": _number(row["bah"]),
             "website": row["insturl"],
+            # Not VA-confirmed -- found via a separate offline search script
+            # (scripts/init-va-website-guesses.py) only when VA's own
+            # website field is empty. Must be labeled as unverified wherever
+            # it's surfaced; see the "Unverified school link" handling in
+            # app/agent.py.
+            "guessed_website": guessed_website,
             "veteran_tuition_policy_url": row["vet_tuition_policy_url"],
             "p911_recipients": row["p911_recipients"],
             "p911_tuition_fees": _number(row["p911_tuition_fees"]),

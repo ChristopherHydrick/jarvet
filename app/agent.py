@@ -488,6 +488,22 @@ class JarvetTools:
                         # than rebuilding the crawler's label extraction.
                         page_label = (discovery.get("program_page_label") or "program page")[:60].strip()
                         resource["label"] = f"{facility['institution']}: {page_label}"
+            # For facilities with no VA-confirmed website at all, a separate
+            # offline script (scripts/init-va-website-guesses.py) may have a
+            # best-effort candidate found via web search. This is never
+            # crawled further (compounding an already-unverified URL isn't
+            # worth it) and is always labeled distinctly so it can't be
+            # mistaken for a VA-confirmed link.
+            for facility in result["facilities"]:
+                if facility.get("website") or not facility.get("guessed_website"):
+                    continue
+                self._add_resource({
+                    "label": f"Unverified: possible website for {facility['institution']}",
+                    "url": facility["guessed_website"],
+                    "kind": "unverified-website",
+                    "group": str(facility["institution"]).title(),
+                    "action": "Unverified school link",
+                })
             return {
                 **result,
                 "note": (
@@ -502,7 +518,10 @@ class JarvetTools:
                     "the text loses that link even though its card still appears below. If "
                     "total_facilities exceeds the number of results actually returned here, say "
                     "how many more exist beyond those named. This does not rank by distance; "
-                    "mention state or nationwide scope explicitly. Not geography-ranked. Never "
+                    "mention state or nationwide scope explicitly. A guessed_website on a "
+                    "facility was found by web search, not confirmed by VA -- never state it as "
+                    "the school's website or say VA confirms it; if you mention it at all, call "
+                    "it an unverified possible website the person should confirm themselves. Never "
                     "invent a facility not in the results."
                 ),
             }
@@ -555,10 +574,28 @@ class JarvetTools:
                         "group": group_name,
                         "action": "School website",
                     })
+            elif merged.get("guessed_website"):
+                # No VA-confirmed website to crawl from -- only a best-effort
+                # web-search candidate. Not crawled further (compounding an
+                # already-unverified URL isn't worth it) and always labeled
+                # distinctly from the VA-confirmed cases above.
+                self._add_resource({
+                    "label": f"Unverified: possible website for {merged['institution']}",
+                    "url": merged["guessed_website"],
+                    "kind": "unverified-website",
+                    "group": str(merged["institution"]).title(),
+                    "action": "Unverified school link",
+                })
             return {
                 "facility": merged,
                 "source": "VA GI Bill Comparison Tool",
-                "note": "This official detail page verifies the facility record. Contact and current program availability may still require provider confirmation.",
+                "note": (
+                    "This official detail page verifies the facility record. Contact and "
+                    "current program availability may still require provider confirmation. "
+                    "A guessed_website was found by web search, not confirmed by VA -- never "
+                    "state it as the school's website or say VA confirms it; call it an "
+                    "unverified possible website the person should confirm themselves."
+                ),
             }
 
         if name == "get_official_resources":

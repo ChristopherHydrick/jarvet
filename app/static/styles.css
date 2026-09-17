@@ -95,6 +95,8 @@ main { min-height: 100dvh; position: relative; }
 .resource-actions { display: flex; flex-wrap: wrap; gap: 7px; }
 .resource-actions a { min-height: 34px; display: flex; align-items: center; justify-content: space-between; gap: 9px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 3px; color: var(--ink); background: #fffdf7; text-align: left; text-decoration: none; font: 600 11px/1.25 "IBM Plex Sans"; }
 .resource-actions a:hover { border-color: var(--accent); color: var(--accent); }
+.resource-actions a.unverified-link { border-style: dashed; color: var(--muted); background: transparent; }
+.resource-actions a.unverified-link:hover { border-color: var(--muted); color: var(--ink); }
 .provider-details { margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--line); }
 .provider-details summary {
   display: inline-flex;

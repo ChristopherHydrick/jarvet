@@ -251,6 +251,7 @@ function renderResources(resources = []) {
     link.target = "_blank";
     link.rel = "noopener noreferrer";
     link.title = resource.label;
+    if (resource.kind === "unverified-website") link.classList.add("unverified-link");
     link.innerHTML = `<span>${resource.action || resource.label}</span><span aria-hidden="true">↗</span>`;
     parent.appendChild(link);
   };
