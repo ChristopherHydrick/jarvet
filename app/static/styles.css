@@ -90,7 +90,7 @@ main { min-height: 100dvh; position: relative; }
 .resource-group:nth-child(even) { background: #f2ecda; }
 .provider-glance { margin: -3px 0 8px; color: var(--muted); font-size: 11px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .resource-heading { min-height: 28px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
-.resource-group h3 { margin: 0 0 9px; font-size: 13px; line-height: 1.3; color: #075985; }
+.resource-group h3 { margin: 0 0 9px; font-size: 13px; line-height: 1.3; }
 .save-provider { display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 3px; color: var(--muted); background: #fffdf7; font: 600 10px "IBM Plex Sans"; cursor: pointer; }
 .save-provider:hover, .save-provider.saved { border-color: var(--accent); color: var(--accent); }
 .resource-actions { display: flex; flex-wrap: wrap; gap: 7px; }
@@ -125,7 +125,7 @@ main { min-height: 100dvh; position: relative; }
 .provider-contact span { color: var(--muted); }
 .program-summary { margin-top: 11px; }
 .program-summary h4 { margin: 0 0 5px; font-size: 11px; }
-.program-summary ul { margin: 0; padding-left: 17px; color: #15803d; font-size: 10px; font-weight: 600; line-height: 1.45; }
+.program-summary ul { margin: 0; padding-left: 17px; color: var(--muted); font-size: 10px; line-height: 1.45; }
 .program-summary li { margin-bottom: 4px; }
 .program-summary p { margin: 5px 0; color: var(--muted); font-size: 10px; line-height: 1.35; }
 .program-summary .program-breakdown { margin-top: -2px; color: var(--ink); font-weight: 600; }
