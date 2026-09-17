@@ -92,6 +92,11 @@ async def discover_program_page(
     school: str, program: str, school_url: str,
     fetch: Callable[[httpx.AsyncClient, str], Awaitable[httpx.Response | None]] | None = None,
 ) -> dict[str, str] | None:
+    # Source website fields (VA workbook, IPEDS) often omit the scheme
+    # (e.g. "www.example.edu/"); urlparse treats that as a bare path with no
+    # hostname, so without this it silently bails out before crawling at all.
+    if school_url and not re.match(r"^https?://", school_url, re.I):
+        school_url = f"https://{school_url}"
     parsed_school = urlparse(school_url)
     if parsed_school.scheme not in {"http", "https"} or not parsed_school.hostname:
         return None

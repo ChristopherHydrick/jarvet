@@ -436,6 +436,58 @@ class JarvetTools:
                 self._add_provider_resource(facility)
                 for facility in result["facilities"]
             ))
+            # Give every school with a known website its own resource so the
+            # inline mention of its name in the reply text links to the
+            # school's own site rather than only the VA Comparison Tool page
+            # (appendLinkedText on the frontend prefers a "program-details"
+            # kind resource over "provider-details" for the same label).
+            # A plain extra action button on each card, not an inline-text
+            # link override: inline mentions of the school's name in the
+            # reply text keep linking to the VA Comparison Tool resource
+            # added above (kind "provider-details" still wins that), while
+            # this gives the card its own separate link to the school's site.
+            with_website = [f for f in result["facilities"] if f.get("website")]
+            website_resources = []
+            for facility in with_website:
+                resource = {
+                    "label": f"Visit {facility['institution']}'s website",
+                    "url": facility["website"],
+                    "kind": "school-website",
+                    "group": str(facility["institution"]).title(),
+                    "action": "School website",
+                }
+                self._add_resource(resource)
+                website_resources.append(resource)
+            # Crawling arbitrary third-party school websites to verify the
+            # specific program page is much slower and less predictable than
+            # the VA API calls above (some sites are slow, block scraping, or
+            # simply lack a matching page), so this is bounded to the first
+            # few rather than attempted for every result.
+            crawl_count = min(8, len(with_website))
+            if crawl_count:
+                discoveries = await discover_program_pages(
+                    [
+                        {
+                            "school": facility["institution"],
+                            "program": (facility.get("matching_programs") or [{}])[0].get("description", program),
+                            "url": facility["website"],
+                        }
+                        for facility in with_website[:crawl_count]
+                    ],
+                    fetch=self.fetch_page,
+                )
+                for facility, resource, discovery in zip(
+                    with_website[:crawl_count], website_resources[:crawl_count], discoveries,
+                ):
+                    program_url = discovery.get("program_url")
+                    if program_url:
+                        resource["url"] = program_url
+                        # The discovered page label can pick up stray nav/
+                        # footer link text from the crawled page; it's only
+                        # used for the button's hover title, so cap it rather
+                        # than rebuilding the crawler's label extraction.
+                        page_label = (discovery.get("program_page_label") or "program page")[:60].strip()
+                        resource["label"] = f"{facility['institution']}: {page_label}"
             return {
                 **result,
                 "note": (
@@ -443,11 +495,15 @@ class JarvetTools:
                     "IHL or NCD program in VA's own catalog. total_facilities is the exact, "
                     "precisely known count; open your reply with that exact number (for "
                     "example 'Found 25 VA-approved diver programs') rather than a vague "
-                    "quantifier like several, many, or multiple. If total_facilities exceeds "
-                    "the number of results actually listed in the reply, say how many more "
-                    "exist beyond those named. This does not rank by distance; mention state "
-                    "or nationwide scope explicitly. Not geography-ranked. Never invent a "
-                    "facility not in the results."
+                    "quantifier like several, many, or multiple. Name every single result in "
+                    "your reply by institution name -- do not summarize as 'some' or 'notable "
+                    "examples' and truncate the list; the frontend auto-links each institution "
+                    "name mentioned in your text to its own resource, so omitting a name from "
+                    "the text loses that link even though its card still appears below. If "
+                    "total_facilities exceeds the number of results actually returned here, say "
+                    "how many more exist beyond those named. This does not rank by distance; "
+                    "mention state or nationwide scope explicitly. Not geography-ranked. Never "
+                    "invent a facility not in the results."
                 ),
             }
 
