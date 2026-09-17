@@ -113,7 +113,7 @@ TOOL_SCHEMAS = [
                 "properties": {
                     "program": {"type": "string", "description": "Plain program or trade keywords, e.g. 'commercial diver', 'HVAC', 'dental assisting'."},
                     "state": {"type": "string", "description": "Two-letter state code to narrow results. Omit for nationwide."},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 15, "default": 8},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 40, "default": 8, "description": "Pass the maximum (40) when the user explicitly asks for all, every, or the complete list of results, not the default."},
                 },
                 "required": ["program"],
             },
@@ -424,7 +424,7 @@ class JarvetTools:
                 return {"error": "A program or trade keyword is required."}
             state = arguments.get("state")
             state = str(state).strip().upper()[:2] if state else None
-            limit = max(1, min(int(arguments.get("limit", 8)), 15))
+            limit = max(1, min(int(arguments.get("limit", 8)), 40))
             result = self.va.programs_for(program, state=state, limit=limit)
             # Live-enrich only the top few results (housing rate, GI Bill
             # student count, contact) to avoid one live VA API round trip per
@@ -508,7 +508,7 @@ Operating principles:
 - Honor scope requests literally. If the user asks for nationwide results or clicks a nationwide suggestion, call find_local_training with scope nationwide and report results from the whole country. Never answer a nationwide request with local results.
 - When a location tool returns ambiguity candidates, ask the user to choose and mention only those candidates. Do not guess a state or save a candidate to the profile before the user chooses.
 - When local results are empty, broaden geography for the SAME occupation: retry find_local_training with scope state, then nationwide, or explain the exact-source gap. Never switch occupations or interests merely to produce a result. Call get_related_occupations only if the user explicitly asks for alternatives or agrees to broaden occupationally.
-- When find_local_training returns few or no IPEDS results for a specific named program, also try find_va_programs with the same trade keywords before concluding options are scarce. It searches VA's own approved program catalog nationwide or by state, which includes proprietary trade schools IPEDS may not classify under the occupation's CIP code.
+- When the user asks to find schools or programs for a specific named program or trade (nationwide or by state), call find_va_programs FIRST, before find_local_training. VA's own program catalog is comprehensive and includes proprietary trade schools that IPEDS's CIP-to-SOC crosswalk may not classify under the matching occupation, so treat it as the primary source for a named-program search, not a fallback tried only after IPEDS looks sparse. Still call find_local_training as well for occupation-based exploration and proximity-ranked results, but never skip or delay find_va_programs for a named-program request.
 - For OJT/employer searches, describe the trade in plain words (for example automotive mechanic, car repair). Provider names are matched semantically by meaning, so sponsors with related names are found without exact word overlap. A semantic match is still only a lead to verify in the official VA tool.
 - Treat OJT, apprenticeships, and other paid training as one family: a user asking for OJT is also asking about apprenticeships, and vice versa. One find_va_facilities employer search covers both; never tell the user you have not checked apprenticeships after an OJT search, or run a second search just for them. VA lists apprenticeships inside its OJT program data and Jarvet labels each program as an apprenticeship or on-the-job training in the provider card.
 - When an employer search returns no name matches, the tool result includes nearest_ojt_providers: the closest approved providers of either type regardless of name. Many sponsors have generic names (trust funds, JATCs, joint apprenticeship councils), and specialized trade schools such as diving academies are school providers rather than employers, so a name miss does not mean no training exists. Inspect each fallback provider's program_summaries for the user's trade before concluding nothing is available. Present relevant fallback providers as leads to verify, clearly saying their names did not mention the trade but their approved programs might include it. Only say an area has no training options after checking both the fallback list and the program summaries.
