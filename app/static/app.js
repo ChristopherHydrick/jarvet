@@ -292,9 +292,19 @@ function renderResources(resources = []) {
   };
 
   const appendProviderDetails = (group, provider) => {
+    const glance = document.createElement("p");
+    glance.className = "provider-glance";
+    const glanceParts = [];
+    const glanceHousing = formatMoney(provider.estimated_housing_allowance);
+    if (glanceHousing) glanceParts.push(`${glanceHousing}/mo housing`);
+    if (provider.accredited) glanceParts.push("Accredited");
+    if (provider.caution_flag) glanceParts.push("⚠ Caution flag");
+    glance.textContent = glanceParts.join(" · ");
+    if (glanceParts.length) group.appendChild(glance);
+
     const details = document.createElement("details");
     details.className = "provider-details";
-    details.open = true;
+    details.open = false;
     const summary = document.createElement("summary");
     summary.textContent = "Benefits, contact and approved programs";
     details.appendChild(summary);
