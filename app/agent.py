@@ -179,10 +179,20 @@ class JarvetTools:
 
     async def _add_provider_resource(
         self, facility: dict[str, Any], group: str | None = None,
-    ) -> None:
+    ) -> dict[str, Any]:
         details = await self.va.provider_details(
             str(facility["facility_code"]), self.provider_context,
         )
+        merged = {**facility, **(details or {})}
+        if "estimated_housing_allowance" in merged:
+            # Once live details are fetched, estimated_housing_allowance (VA
+            # API's dod_bah) is the number the frontend card shows as
+            # "Housing estimate". monthly_housing_rate (the static workbook's
+            # bah, or the live API's own bah field) is a second, sometimes
+            # different, housing figure; leaving both in the dict the LLM
+            # narrates from lets it cite a number that disagrees with the
+            # card the user is looking at.
+            merged.pop("monthly_housing_rate", None)
         self._add_resource({
             "label": f"View {facility['institution']} in the VA Comparison Tool",
             "url": facility["detail_url"],
@@ -190,8 +200,9 @@ class JarvetTools:
             "kind": "provider-details",
             "group": group or str(facility["institution"]).title(),
             "action": "VA benefits",
-            "provider": {**facility, **(details or {})},
+            "provider": merged,
         })
+        return merged
 
     def _location_error(self, location: str) -> dict[str, Any]:
         self.location_candidates = self.va.location_candidates(location)
@@ -295,9 +306,9 @@ class JarvetTools:
                         program["link_status"] = "source_listing_only"
                     va_facility = self.va.match_school(program["institution"])
                     if va_facility:
-                        program["va_facility"] = va_facility
-                        self.training_facilities.append(va_facility)
-                        await self._add_provider_resource(va_facility, program["institution"])
+                        merged = await self._add_provider_resource(va_facility, program["institution"])
+                        program["va_facility"] = merged
+                        self.training_facilities.append(merged)
             return {
                 "occupation": self.selected or {"code": occupation["code"], "title": occupation["title"]},
                 "location": location_label,
@@ -361,12 +372,13 @@ class JarvetTools:
                     location["latitude"], location["longitude"], limit=4, max_miles=radius,
                 )
             self._add_resource(self.official_resources["compare"])
-            await asyncio.gather(*(
+            merged_facilities = await asyncio.gather(*(
                 self._add_provider_resource(facility) for facility in facilities[:4]
             ))
+            facilities[:len(merged_facilities)] = merged_facilities
             # Fallback providers are generic-name leads: attach their cards only
             # after their approved program lists confirm trade relevance.
-            for facility in fallback:
+            for index, facility in enumerate(fallback):
                 details = await self.va.provider_details(
                     str(facility["facility_code"]), " ".join(keywords),
                 )
@@ -379,7 +391,9 @@ class JarvetTools:
                         "Nearest approved OJT sponsor; its approved program list "
                         "mentions the trade, but the name alone did not."
                     )
-                    await self._add_provider_resource(facility)
+                    merged = await self._add_provider_resource(facility)
+                    merged["fallback_note"] = facility["fallback_note"]
+                    fallback[index] = merged
             return {
                 "location": location["label"],
                 "provider_type": provider_type,
@@ -412,7 +426,16 @@ class JarvetTools:
             state = str(state).strip().upper()[:2] if state else None
             limit = max(1, min(int(arguments.get("limit", 8)), 15))
             result = self.va.programs_for(program, state=state, limit=limit)
-            for facility in result["facilities"]:
+            # Live-enrich only the top few results (housing rate, GI Bill
+            # student count, contact) to avoid one live VA API round trip per
+            # result on a nationwide search; the rest keep only the static
+            # workbook fields already in the facility record.
+            enriched = await asyncio.gather(*(
+                self._add_provider_resource(facility)
+                for facility in result["facilities"][:4]
+            ))
+            result["facilities"][:len(enriched)] = enriched
+            for facility in result["facilities"][len(enriched):]:
                 self._add_resource({
                     "label": f"View {facility['institution']} in the VA Comparison Tool",
                     "url": facility["detail_url"],
@@ -437,9 +460,9 @@ class JarvetTools:
             facility = self.va.find_facility(str(arguments.get("query", "")))
             if facility is None:
                 return {"error": "No approved VA facility matched that name or code."}
-            await self._add_provider_resource(facility)
+            merged = await self._add_provider_resource(facility)
             return {
-                "facility": facility,
+                "facility": merged,
                 "source": "VA GI Bill Comparison Tool",
                 "note": "This official detail page verifies the facility record. Contact and current program availability may still require provider confirmation.",
             }
