@@ -53,7 +53,7 @@ main { min-height: 100dvh; position: relative; }
 .onet-credit { max-width: 820px; color: var(--muted); font-size: 9px; line-height: 1.45; letter-spacing: 0; }
 .onet-credit a { color: inherit; text-underline-offset: 2px; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
-.chat { height: 100dvh; max-width: 920px; margin: auto; padding: 0 24px; display: grid; grid-template-rows: 72px auto minmax(0, 1fr) auto auto auto; }
+.chat { height: 100dvh; max-width: min(94vw, 1400px); margin: auto; padding: 0 24px; display: grid; grid-template-rows: 72px auto minmax(0, 1fr) auto auto auto; }
 .chat[hidden] { display: none; }
 .chat > header { grid-row: 1; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }
 .brand { display: flex; align-items: center; gap: 10px; color: var(--ink); font: 700 18px "IBM Plex Mono", monospace; letter-spacing: 1px; text-decoration: none; }
@@ -73,7 +73,7 @@ main { min-height: 100dvh; position: relative; }
 .profile-item { padding: 5px 9px; }
 .profile-item::after { content: " ×"; color: var(--muted); }
 .messages { grid-row: 3; min-height: 0; padding: 34px 0; overflow-y: auto; }
-.message { max-width: 72%; margin-bottom: 22px; padding: 15px 18px; border-radius: 6px; line-height: 1.55; white-space: pre-wrap; animation: arrive .3s ease both; }
+.message { max-width: 85%; margin-bottom: 22px; padding: 15px 18px; border-radius: 6px; line-height: 1.55; white-space: pre-wrap; animation: arrive .3s ease both; }
 .assistant { background: var(--panel); border: 1px solid var(--line); }
 .user { margin-left: auto; color: white; background: var(--ink); }
 .thinking { color: var(--muted); font-style: italic; }
@@ -85,7 +85,7 @@ main { min-height: 100dvh; position: relative; }
 .starting-group button { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 0; border-bottom: 1px solid var(--line); color: var(--ink); background: transparent; text-align: left; text-decoration: none; font: 500 13px/1.35 "IBM Plex Sans"; cursor: pointer; }
 .starting-group button { min-height: 48px; padding: 8px 4px; }
 .starting-group button:hover { color: var(--accent); padding-left: 8px; }
-.resource-list { width: min(100%, 620px); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: -12px 0 24px; }
+.resource-list { width: min(100%, 900px); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: -12px 0 24px; }
 .resource-group { min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); }
 .resource-heading { min-height: 28px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
 .resource-group h3 { margin: 0 0 9px; font-size: 13px; line-height: 1.3; }
