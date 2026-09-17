@@ -24,6 +24,12 @@ their own trusted destination.
   resolved city/state or ZIP, with facility-level benefit facts, program
   summaries (degree, non-college, OJT, apprenticeship), and official VA
   Comparison Tool detail links.
+- **VA program catalog search** — keyword search over every VA-approved
+  school's own IHL (degree) and NCD (certificate/non-college) program list,
+  nationwide or by state, independent of IPEDS's occupation classification.
+  Complements local training discovery for proprietary trade schools (for
+  example commercial diving academies) that IPEDS's CIP-to-SOC crosswalk does
+  not always classify under the matching occupation.
 - **Agentic tool calling** — the model decides which tools to call; Python
   validates arguments and returns structured facts. Geographic and occupational
   broadening are separate, explicit actions.
@@ -41,6 +47,7 @@ their own trusted destination.
 | Occupation graph | O*NET 31.0 N-Triples in an embedded Oxigraph store + FTS5 search index |
 | School programs | IPEDS directory + completions + O*NET CIP-to-SOC crosswalk in SQLite |
 | Provider & benefit data | VA GI Bill Comparison Tool workbook in SQLite + VA institution API (7-day cache) |
+| VA program catalog | Bulk crawl of every approved school's IHL/NCD programs from the VA institution-programs API, indexed with FTS5 |
 | Geography | Census 2025 ZCTA Gazetteer centroids for proximity and ZIP resolution |
 | Frontend | Vanilla HTML/CSS/JS single page |
 | Caching | SQLite response cache, VA API cache, My Next Move HTML parsing |
@@ -109,6 +116,26 @@ run:
 REFRESH_VA_DATA=1 ./scripts/init-onet-data.sh
 .venv/bin/python scripts/init-va-data.py
 ```
+
+### VA program catalog
+
+`scripts/init-va-programs-data.py` bulk-crawls every approved
+`school_provider` facility's IHL and NCD program list from the same public VA
+institution-programs API that provider detail lookups already use for one
+facility at a time, then builds an FTS5 index over the results
+(`va_program_search` in `.cache/va-comparison.sqlite`). This is what backs
+`VaComparison.programs_for()` and the agent's `find_va_programs` tool for
+nationwide/state program search independent of IPEDS. It is not run by
+`postCreateCommand.sh`: a full crawl makes roughly two API calls per approved
+school (tens of thousands of requests) and can take a while. Run it manually,
+and re-run it periodically to refresh:
+
+```bash
+.venv/bin/python scripts/init-va-programs-data.py
+```
+
+The crawl is resumable — facility codes already recorded are skipped on a
+re-run, so an interrupted crawl can simply be restarted.
 
 ## School program data (IPEDS)
 

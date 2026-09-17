@@ -106,6 +106,22 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "find_va_programs",
+            "description": "Search VA's own approved IHL (degree) and NCD (certificate/non-college) program catalog for a program or trade keyword, nationwide or within one state. Not geography-ranked. Complements find_local_training: use this when IPEDS results are sparse or empty for a specific named program, since VA approves many proprietary trade schools (for example commercial diving academies) that IPEDS's CIP crosswalk can miss.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "program": {"type": "string", "description": "Plain program or trade keywords, e.g. 'commercial diver', 'HVAC', 'dental assisting'."},
+                    "state": {"type": "string", "description": "Two-letter state code to narrow results. Omit for nationwide."},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 15, "default": 8},
+                },
+                "required": ["program"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_va_facility",
             "description": "Find one previously named VA-approved provider by exact facility code or institution name and attach its official VA detail-page link. Use for follow-ups asking for a provider link or details.",
             "parameters": {
@@ -388,6 +404,35 @@ class JarvetTools:
                 ),
             }
 
+        if name == "find_va_programs":
+            program = str(arguments.get("program", "")).strip()
+            if not program:
+                return {"error": "A program or trade keyword is required."}
+            state = arguments.get("state")
+            state = str(state).strip().upper()[:2] if state else None
+            limit = max(1, min(int(arguments.get("limit", 8)), 15))
+            result = self.va.programs_for(program, state=state, limit=limit)
+            for facility in result["facilities"]:
+                self._add_resource({
+                    "label": f"View {facility['institution']} in the VA Comparison Tool",
+                    "url": facility["detail_url"],
+                    "inline_labels": [facility["institution"]],
+                    "kind": "provider-details",
+                    "group": str(facility["institution"]).title(),
+                    "action": "VA benefits",
+                    "provider": facility,
+                })
+            return {
+                **result,
+                "note": (
+                    "These are exact-name VA-approved facilities with at least one matching "
+                    "IHL or NCD program in VA's own catalog. total_facilities/total_programs "
+                    "are the full counts; say how many more exist when they exceed what is "
+                    "shown. This does not rank by distance; mention state or nationwide scope "
+                    "explicitly. Not geography-ranked. Never invent a facility not in the results."
+                ),
+            }
+
         if name == "get_va_facility":
             facility = self.va.find_facility(str(arguments.get("query", "")))
             if facility is None:
@@ -440,6 +485,7 @@ Operating principles:
 - Honor scope requests literally. If the user asks for nationwide results or clicks a nationwide suggestion, call find_local_training with scope nationwide and report results from the whole country. Never answer a nationwide request with local results.
 - When a location tool returns ambiguity candidates, ask the user to choose and mention only those candidates. Do not guess a state or save a candidate to the profile before the user chooses.
 - When local results are empty, broaden geography for the SAME occupation: retry find_local_training with scope state, then nationwide, or explain the exact-source gap. Never switch occupations or interests merely to produce a result. Call get_related_occupations only if the user explicitly asks for alternatives or agrees to broaden occupationally.
+- When find_local_training returns few or no IPEDS results for a specific named program, also try find_va_programs with the same trade keywords before concluding options are scarce. It searches VA's own approved program catalog nationwide or by state, which includes proprietary trade schools IPEDS may not classify under the occupation's CIP code.
 - For OJT/employer searches, describe the trade in plain words (for example automotive mechanic, car repair). Provider names are matched semantically by meaning, so sponsors with related names are found without exact word overlap. A semantic match is still only a lead to verify in the official VA tool.
 - Treat OJT, apprenticeships, and other paid training as one family: a user asking for OJT is also asking about apprenticeships, and vice versa. One find_va_facilities employer search covers both; never tell the user you have not checked apprenticeships after an OJT search, or run a second search just for them. VA lists apprenticeships inside its OJT program data and Jarvet labels each program as an apprenticeship or on-the-job training in the provider card.
 - When an employer search returns no name matches, the tool result includes nearest_ojt_providers: the closest approved providers of either type regardless of name. Many sponsors have generic names (trust funds, JATCs, joint apprenticeship councils), and specialized trade schools such as diving academies are school providers rather than employers, so a name miss does not mean no training exists. Inspect each fallback provider's program_summaries for the user's trade before concluding nothing is available. Present relevant fallback providers as leads to verify, clearly saying their names did not mention the trade but their approved programs might include it. Only say an area has no training options after checking both the fallback list and the program summaries.

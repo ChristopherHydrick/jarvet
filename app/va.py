@@ -45,6 +45,13 @@ PROGRAM_CONTEXT_EXPANSIONS = {
     "technology": {"computer", "cyber", "data", "information", "network", "software"},
     "trades": {"carpenter", "construction", "electrical", "electrician", "hvac", "plumbing", "welding"},
 }
+# VA program titles are short and sometimes abbreviate "diverse"/"diversity"
+# down to just "diver"/"divers" (e.g. "MA EDU LINGUISTICS DIVER EDU EQUITY"
+# for "...Diverse Edu Equity"), which collides with genuine diver/diving
+# trade programs under a whole-word match. These titles reliably co-occur
+# with DEI/education jargon that never appears in an actual diving program,
+# so a match containing any of these markers is dropped as a false positive.
+DIVERSITY_FALSE_POSITIVE_MARKERS = ("equity", "inclus", "cultu", "lingui", "cltrly", "learn")
 
 
 def _normalized(value: str) -> str:
@@ -56,6 +63,26 @@ def _number(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _word_variants(term: str) -> list[str]:
+    """Common English word-form variants of a search term (diver/diving/dive),
+    so one query catches an agent noun, its -ing form, and its base verb
+    without falling back to a stemmer, which classically conflates unrelated
+    words such as "diver" and "diversity"."""
+    variants = {term}
+    if term.endswith("er") and len(term) > 4:
+        root = term[:-2]
+        variants.update({root + "ing", root + "e", root + "ed"})
+    if term.endswith("ing") and len(term) > 5:
+        root = term[:-3]
+        variants.update({root + "er", root + "e", root + "ed"})
+    if term.endswith("e") and len(term) > 3:
+        variants.update({term + "r", term[:-1] + "ing", term + "d"})
+    if term.endswith("ed") and len(term) > 4 and not term.endswith("eed"):
+        root = term[:-2]
+        variants.update({root, root + "er", root + "ing"})
+    return sorted(variants)
 
 
 def _distance_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -498,6 +525,107 @@ class VaComparison:
             if distance <= max_miles:
                 facilities.append(self._record(row, distance))
         return sorted(facilities, key=lambda item: item["distance_miles"])[:limit]
+
+    def programs_for(
+        self, keyword: str, *, state: str | None = None, limit: int = 8,
+    ) -> dict[str, Any]:
+        """Search VA's own approved IHL/NCD program catalog for a keyword,
+        nationwide or within one state. Built by
+        scripts/init-va-programs-data.py, which bulk-crawls every approved
+        school's program list from the same VA API provider_details() uses
+        for a single facility. Complements the IPEDS/O*NET pipeline, which
+        can miss proprietary trade schools such as commercial diving
+        academies that VA approves directly."""
+        database = self._database()
+        if database.execute(
+            "SELECT name FROM sqlite_master WHERE name = 'va_program_search'"
+        ).fetchone() is None:
+            return {
+                "total_facilities": 0, "total_programs": 0, "facilities": [],
+                "source": "VA GI Bill Comparison Tool approved program catalog",
+                "note": "VA program index has not been built yet. Run scripts/init-va-programs-data.py.",
+            }
+        terms = [
+            term for term in _normalized(keyword).split()
+            if len(term) >= 3 and term not in PROGRAM_STOP_WORDS
+        ]
+        if not terms:
+            return {
+                "total_facilities": 0, "total_programs": 0, "facilities": [],
+                "source": "VA GI Bill Comparison Tool approved program catalog",
+            }
+        term_variants = [_word_variants(term) for term in terms]
+        match_query = " AND ".join(
+            "(" + " OR ".join(f'"{variant}"*' for variant in variants) + ")"
+            for variants in term_variants
+        )
+        rows = database.execute(
+            "SELECT facility_code, program_type, description, "
+            "bm25(va_program_search) AS rank FROM va_program_search "
+            "WHERE va_program_search MATCH ? ORDER BY rank",
+            (match_query,),
+        ).fetchall()
+
+        # The FTS5 prefix wildcard above is a raw character-prefix match, so a
+        # query for "diver" also matches indexed terms like "diversity" and
+        # "diversified" that merely start with the same letters. Require each
+        # query term (or one of its word-form variants, such as "diving" for
+        # "diver") to appear as a whole word (allowing a short suffix such as
+        # a plural "s") in the actual description before counting it as a
+        # genuine match.
+        word_pattern_groups = [
+            [re.compile(rf"\b{re.escape(variant)}\w?\b", re.I) for variant in variants]
+            for variants in term_variants
+        ]
+        rows = [
+            row for row in rows
+            if all(
+                any(pattern.search(row[2]) for pattern in group)
+                for group in word_pattern_groups
+            )
+        ]
+        if any(term.startswith("div") for term in terms):
+            rows = [
+                row for row in rows
+                if not any(marker in row[2].lower() for marker in DIVERSITY_FALSE_POSITIVE_MARKERS)
+            ]
+
+        grouped: dict[str, dict[str, Any]] = {}
+        facility_cache: dict[str, sqlite3.Row | None] = {}
+        for facility_code, program_type, description, rank in rows:
+            if facility_code not in facility_cache:
+                facility_cache[facility_code] = database.execute(
+                    "SELECT * FROM facilities WHERE facility_code = ? AND approved = 1",
+                    (facility_code,),
+                ).fetchone()
+            facility_row = facility_cache[facility_code]
+            if facility_row is None:
+                continue
+            if state and facility_row["state"] != state.upper():
+                continue
+            entry = grouped.setdefault(facility_code, {
+                "facility": self._record(facility_row),
+                "matching_programs": [],
+                "best_rank": rank,
+            })
+            entry["matching_programs"].append({"type": program_type, "description": description})
+            entry["best_rank"] = min(entry["best_rank"], rank)
+
+        ordered = sorted(grouped.values(), key=lambda item: item["best_rank"])
+        results = [
+            {
+                **item["facility"],
+                "matching_programs": item["matching_programs"][:6],
+                "matching_program_count": len(item["matching_programs"]),
+            }
+            for item in ordered[:limit]
+        ]
+        return {
+            "total_facilities": len(ordered),
+            "total_programs": sum(len(item["matching_programs"]) for item in ordered),
+            "facilities": results,
+            "source": "VA GI Bill Comparison Tool approved program catalog",
+        }
 
     def match_school(self, name: str) -> dict[str, Any] | None:
         normalized = re.sub(r"[^a-z0-9]+", " ", name.lower()).strip()
