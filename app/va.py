@@ -52,6 +52,19 @@ PROGRAM_CONTEXT_EXPANSIONS = {
 # with DEI/education jargon that never appears in an actual diving program,
 # so a match containing any of these markers is dropped as a false positive.
 DIVERSITY_FALSE_POSITIVE_MARKERS = ("equity", "inclus", "cultu", "lingui", "cltrly", "learn")
+# Specific (facility_code, description) pairs confirmed to be unrelated to
+# what their text superficially matches, due to a likely typo or unusual
+# abbreviation in VA's own source data. These are indistinguishable from a
+# genuine match by any general text pattern (unlike the diversity/equity
+# case above), so each entry here is a manually verified, one-off exclusion,
+# not a rule -- add to this only after confirming the specific case, never as
+# a general heuristic.
+KNOWN_FALSE_POSITIVE_PROGRAMS = {
+    # "DIVER OPERATOR CT" at Ivy Tech Community College-South Bend is VA's
+    # own listing for "Driver/Operator Certificate (CT)", a heavy-equipment
+    # credential; the source data appears to be missing the "R" in "DRIVER".
+    ("14903414", "DIVER OPERATOR CT"),
+}
 
 
 def _normalized(value: str) -> str:
@@ -583,6 +596,7 @@ class VaComparison:
                 any(pattern.search(row[2]) for pattern in group)
                 for group in word_pattern_groups
             )
+            and (row[0], row[2]) not in KNOWN_FALSE_POSITIVE_PROGRAMS
         ]
         if any(term.startswith("div") for term in terms):
             rows = [

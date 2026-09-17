@@ -214,6 +214,58 @@ async def discover_program_page(
     }
 
 
+ADMISSIONS_WORDS = re.compile(
+    r"\bapply\b|\bapplication\b|\badmission|\benroll|\brequest\s+info|\bget\s+started\b|"
+    r"\bhow\s+to\s+apply\b",
+    re.I,
+)
+
+
+async def discover_admissions_page(
+    school_url: str,
+    fetch: Callable[[httpx.AsyncClient, str], Awaitable[httpx.Response | None]] | None = None,
+) -> dict[str, str] | None:
+    """Find a school's own apply/admissions page. Unlike discover_program_page,
+    this only looks at links on the homepage itself -- admissions pages are
+    almost always in the main navigation or footer with predictable wording,
+    so a deeper multi-hop crawl isn't needed."""
+    if school_url and not re.match(r"^https?://", school_url, re.I):
+        school_url = f"https://{school_url}"
+    parsed_school = urlparse(school_url)
+    if parsed_school.scheme not in {"http", "https"} or not parsed_school.hostname:
+        return None
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; Jarvet/1.0; program-link-verifier)"}
+
+    async def default_fetch(client: httpx.AsyncClient, url: str) -> httpx.Response | None:
+        return await client.get(url)
+
+    fetch = fetch or default_fetch
+    try:
+        async with httpx.AsyncClient(timeout=12, follow_redirects=True, headers=headers) as client:
+            response = await fetch(client, school_url)
+            if response is None:
+                return None
+            response.raise_for_status()
+            root = PageParser()
+            root.feed(response.text[:1_500_000])
+    except httpx.HTTPError:
+        return None
+
+    candidates: list[tuple[int, str, str]] = []
+    for link in root.links:
+        absolute = urljoin(str(response.url), link["url"])
+        if not _same_site(absolute, school_url):
+            continue
+        text = link["label"] + " " + absolute
+        if ADMISSIONS_WORDS.search(text):
+            priority = 2 if re.search(r"\bapply\b|\bhow\s+to\s+apply\b", text, re.I) else 1
+            candidates.append((priority, link["label"].strip() or "Apply", absolute))
+    if not candidates:
+        return None
+    _, label, url = max(candidates, key=lambda item: item[0])
+    return {"url": url, "label": label, "source": "Official institution website"}
+
+
 async def discover_program_pages(
     programs: list[dict[str, str]],
     fetch: Callable[[httpx.AsyncClient, str], Awaitable[httpx.Response | None]] | None = None,

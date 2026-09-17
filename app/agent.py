@@ -8,7 +8,7 @@ import httpx
 
 from app.ipeds import IpedsIndex
 from app.onet import OnetGraph
-from app.programs import discover_program_pages
+from app.programs import discover_admissions_page, discover_program_page, discover_program_pages
 from app.va import VaComparison
 
 TrainingFetcher = Callable[[str, str], Awaitable[list[dict[str, str]] | None]]
@@ -512,6 +512,49 @@ class JarvetTools:
             if facility is None:
                 return {"error": "No approved VA facility matched that name or code."}
             merged = await self._add_provider_resource(facility)
+            # One specific school was selected, so a full site crawl here
+            # costs one school's worth of latency, not a whole search's --
+            # unlike find_va_programs, where this is bounded to a handful of
+            # results to keep a broad search responsive.
+            if merged.get("website"):
+                try:
+                    program_discovery, admissions_discovery = await asyncio.wait_for(
+                        asyncio.gather(
+                            discover_program_page(
+                                merged["institution"], self.provider_context or merged["institution"],
+                                merged["website"], self.fetch_page,
+                            ),
+                            discover_admissions_page(merged["website"], self.fetch_page),
+                        ),
+                        timeout=15,
+                    )
+                except asyncio.TimeoutError:
+                    program_discovery = admissions_discovery = None
+                group_name = str(merged["institution"]).title()
+                if program_discovery:
+                    self._add_resource({
+                        "label": f"{merged['institution']}: {program_discovery['label'][:60].strip()}",
+                        "url": program_discovery["url"],
+                        "kind": "school-website",
+                        "group": group_name,
+                        "action": "Program details",
+                    })
+                if admissions_discovery:
+                    self._add_resource({
+                        "label": f"{merged['institution']}: {admissions_discovery['label'][:60].strip()}",
+                        "url": admissions_discovery["url"],
+                        "kind": "school-website",
+                        "group": group_name,
+                        "action": "How to apply",
+                    })
+                if not program_discovery and not admissions_discovery:
+                    self._add_resource({
+                        "label": f"Visit {merged['institution']}'s website",
+                        "url": merged["website"],
+                        "kind": "school-website",
+                        "group": group_name,
+                        "action": "School website",
+                    })
             return {
                 "facility": merged,
                 "source": "VA GI Bill Comparison Tool",
