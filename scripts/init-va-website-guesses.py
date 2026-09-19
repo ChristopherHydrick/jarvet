@@ -149,11 +149,22 @@ async def search(client: httpx.AsyncClient, api_key: str, query: str) -> list[st
                 headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
                 json={"q": query},
             )
-            if response.status_code in (402, 403):
-                raise QuotaExhausted(
-                    f"Serper API returned {response.status_code} -- free query allowance is "
-                    "likely used up. Check your usage at https://serper.dev/dashboard."
-                )
+            if response.status_code in (400, 402, 403):
+                # Serper returns plain 400 with {"message": "Not enough
+                # credits"} when the allowance runs out (not just 402/403),
+                # so check the body rather than trusting the status code
+                # alone -- a real 400 (bad request) should still retry/fail
+                # normally instead of being mistaken for quota exhaustion.
+                try:
+                    message = response.json().get("message", "")
+                except ValueError:
+                    message = ""
+                if response.status_code in (402, 403) or "credit" in message.lower():
+                    raise QuotaExhausted(
+                        f"Serper API returned {response.status_code} ({message or 'no message'}) "
+                        "-- free query allowance is likely used up. Check your usage at "
+                        "https://serper.dev/dashboard."
+                    )
             if response.status_code == 429:
                 await asyncio.sleep(3 * (attempt + 1))
                 continue
@@ -206,7 +217,11 @@ async def run(connection: sqlite3.Connection, row_limit: int | None, api_key: st
         # pick_best() can't validate, so it would either reject every real
         # match or need a much more permissive check that risks accepting
         # wrong ones instead.
-        "AND state IS NOT NULL AND length(state) = 2"
+        "AND state IS NOT NULL AND length(state) = 2 "
+        # High schools are out of scope for this tool (it's for VA
+        # post-secondary/GI Bill benefits comparison), so don't spend Serper
+        # queries looking up their websites.
+        "AND institution NOT LIKE '%HIGH SCHOOL%'"
     ).fetchall()
     targets = [row for row in all_rows if row[0] not in already_attempted]
     if row_limit is not None:

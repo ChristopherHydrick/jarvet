@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.agent import run_agent
-from app.cache import HttpCache, ResponseCache
+from app.cache import ResponseCache
 from app.ipeds import IpedsIndex
 from app.onet import OnetGraph
 from app.va import VaComparison
@@ -26,11 +26,10 @@ va_index = VaComparison(ROOT / ".cache" / "va-comparison.sqlite")
 ipeds_index = IpedsIndex(ROOT / ".cache" / "ipeds.sqlite")
 response_cache = ResponseCache(
     ROOT / ".cache" / "chat-responses.sqlite",
-    version=os.getenv("JARVET_CACHE_VERSION", "24"),
+    version=os.getenv("JARVET_CACHE_VERSION", "25"),
     max_entries=int(os.getenv("JARVET_CACHE_MAX_ENTRIES", "500")),
     ttl_seconds=int(os.getenv("JARVET_CACHE_TTL_SECONDS", "604800")),
 )
-http_cache = HttpCache(ROOT / ".cache" / "http-responses.sqlite")
 
 
 @asynccontextmanager
@@ -39,12 +38,10 @@ async def lifespan(_: FastAPI):
     va_index.load()
     ipeds_index.load()
     response_cache.load()
-    http_cache.load()
     try:
         yield
     finally:
         response_cache.close()
-        http_cache.close()
 
 
 app = FastAPI(title="Jarvet", lifespan=lifespan)
@@ -87,23 +84,6 @@ VA_RESOURCES = {
     "vre": {"label": "Explore Veteran Readiness and Employment", "url": "https://www.va.gov/careers-employment/vocational-rehabilitation/"},
     "bright": {"label": "Browse all Bright Outlook occupations", "url": "https://www.onetonline.org/find/bright?b=0"},
 }
-
-
-async def fetch_cached_page(
-    client: httpx.AsyncClient, url: str,
-) -> httpx.Response | None:
-    """Fetch a page through the shared HTTP cache (7-day TTL)."""
-    cached = http_cache.get(url, ttl_seconds=7 * 24 * 60 * 60)
-    if cached is not None:
-        body, content_type = cached
-        return httpx.Response(
-            200, content=body, headers={"content-type": content_type},
-            request=httpx.Request("GET", url),
-        )
-    response = await client.get(url)
-    response.raise_for_status()
-    http_cache.put(url, response.content, response.headers.get("content-type", ""))
-    return response
 
 
 def clean_profile(raw: Any, fallback: dict[str, list[str]]) -> dict[str, list[str]]:
@@ -272,18 +252,10 @@ async def chat(request: ChatRequest, response: Response):
     base_url = os.getenv("LLM_BASE_URL", "http://host.docker.internal:8888/v1").rstrip("/")
     api_key = os.getenv("LLM_API_KEY", "")
     model = os.getenv("LLM_MODEL", "")
-    cache_key = response_cache.key({
-        "messages": [message.model_dump() for message in request.messages],
-        "profile": profile,
-        "selected_occupation": request.selected_occupation,
-        "saved_providers": [provider.model_dump() for provider in request.saved_providers],
-        "model": model,
-    })
-    cached = response_cache.get(cache_key)
-    if cached is not None:
-        response.headers["X-Jarvet-Cache"] = "HIT"
-        return cached
-    response.headers["X-Jarvet-Cache"] = "MISS"
+    # Response caching is disabled: an occasional bad/inconsistent model
+    # answer would otherwise get frozen under its exact request key and keep
+    # being served indefinitely for that same query, masking real fixes.
+    response.headers["X-Jarvet-Cache"] = "DISABLED"
     if not api_key:
         raise HTTPException(503, "LLM_API_KEY is not configured in the container environment.")
     try:
@@ -295,7 +267,6 @@ async def chat(request: ChatRequest, response: Response):
             onet=index,
             va=va_index,
             ipeds=ipeds_index,
-            fetch_page=fetch_cached_page,
             official_resources=VA_RESOURCES,
             base_url=base_url,
             api_key=api_key,
@@ -332,5 +303,4 @@ async def chat(request: ChatRequest, response: Response):
         "matches": result["matches"][:3],
         "selected_occupation": result["selected_occupation"],
     }
-    response_cache.put(cache_key, api_response)
     return api_response

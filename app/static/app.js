@@ -256,7 +256,12 @@ function renderResources(resources = []) {
     parent.appendChild(link);
   };
 
-  const formatMoney = value => Number.isFinite(Number(value))
+  // Number.isFinite(value) directly, NOT Number.isFinite(Number(value)) --
+  // wrapping with Number() first coerces a genuinely-missing null tuition
+  // value (VA has no figure on file) to 0 (a JS quirk: Number(null) === 0),
+  // which then passed the finite check and rendered as "$0/year" instead of
+  // being omitted, wrongly implying the school confirmed free tuition.
+  const formatMoney = value => Number.isFinite(value)
     ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value)
     : null;
 
@@ -292,12 +297,20 @@ function renderResources(resources = []) {
     updateSaveButtons();
   };
 
+  const titleCaseWords = value => value.replace(/\w\S*/g, word => word[0].toUpperCase() + word.slice(1).toLowerCase());
+
   const appendProviderDetails = (group, provider) => {
+    const addressText = provider.address
+      || [provider.city && titleCaseWords(provider.city), provider.state].filter(Boolean).join(", ");
+    if (addressText) {
+      const address = document.createElement("p");
+      address.className = "provider-address";
+      address.textContent = addressText;
+      group.appendChild(address);
+    }
     const glance = document.createElement("p");
     glance.className = "provider-glance";
     const glanceParts = [];
-    const glanceHousing = formatMoney(provider.estimated_housing_allowance);
-    if (glanceHousing) glanceParts.push(`${glanceHousing}/mo housing`);
     if (provider.accredited) glanceParts.push("Accredited");
     if (provider.caution_flag) glanceParts.push("⚠ Caution flag");
     glance.textContent = glanceParts.join(" · ");
@@ -376,7 +389,15 @@ function renderResources(resources = []) {
           const item = document.createElement("li");
           const programName = typeof program === "string" ? program : program.name;
           const programCategory = typeof program === "string" ? "" : program.category;
-          item.textContent = programName;
+          const programMatched = typeof program === "string" ? false : program.matched;
+          if (programMatched) {
+            const name = document.createElement("span");
+            name.className = "program-match";
+            name.textContent = programName;
+            item.appendChild(name);
+          } else {
+            item.appendChild(document.createTextNode(programName));
+          }
           if (programCategory) {
             const category = document.createElement("span");
             category.className = "program-category";

@@ -25,7 +25,11 @@ dist/
 .jarvet.pid
 .cloudflared.log
 .cloudflared.pid
+*.log
 .cache/
+
+# Stray file created by an accidental `> nul` redirect on Windows
+nul
 
 # Downloaded O*NET graph database
 data/db_*_nt/
