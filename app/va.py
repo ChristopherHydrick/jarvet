@@ -37,6 +37,17 @@ PROGRAM_STOP_WORDS = {
     "help", "near", "program", "programs", "school", "study", "the", "training",
     "want", "with",
 }
+# VA program titles lead with a short degree-level abbreviation (e.g. "BS
+# BUSINESS MARKETING", "AA MARKETING MANAGEMENT", "MS MARKETING") or embed a
+# short credential abbreviation (e.g. "BSN NURSING-RN TO BSN"). These are two
+# letters, so without this allowlist they'd be silently dropped by the >= 3
+# character floor below, which exists to filter out noise words -- but that
+# also meant a request like "only BS programs" or "RN programs" could never
+# actually be scoped server-side: "bs"/"rn" was thrown away, the search fell
+# back to matching every level/credential, and the model's own text-only
+# filtering left every non-matching facility's tile attached anyway (tiles
+# come from the raw tool result, not the model's prose).
+DEGREE_LEVEL_TERMS = {"aa", "as", "ba", "bs", "ma", "ms", "gc", "jd", "do", "rn"}
 PROGRAM_CONTEXT_EXPANSIONS = {
     "healthcare": {
         "ambulatory", "case", "clinical", "coder", "health", "hospital", "medical",
@@ -44,6 +55,17 @@ PROGRAM_CONTEXT_EXPANSIONS = {
     },
     "technology": {"computer", "cyber", "data", "information", "network", "software"},
     "trades": {"carpenter", "construction", "electrical", "electrician", "hvac", "plumbing", "welding"},
+    # A veteran asking about becoming a pilot rarely says "aviation" and
+    # vice versa, but VA program titles are inconsistent about which word
+    # they use ("PROFESSIONAL PILOT BS" vs. "AVIATION MANAGEMENT BS" at the
+    # same school) -- without this, the plain word-overlap scoring below
+    # ranks a same-school program that happens to share a literal word with
+    # the request (or even an unrelated one that merely shares the searched
+    # city/state name) ahead of the actual best-fit program, silently
+    # dropping it from the tile's shown sample.
+    "aviation": {"pilot", "flight", "aircraft", "aeronautics", "flying"},
+    "pilot": {"aviation", "flight", "aircraft", "flying"},
+    "flight": {"pilot", "aviation", "aircraft", "flying"},
 }
 # VA program titles are short and sometimes abbreviate "diverse"/"diversity"
 # down to just "diver"/"divers" (e.g. "MA EDU LINGUISTICS DIVER EDU EQUITY"
@@ -65,6 +87,57 @@ KNOWN_FALSE_POSITIVE_PROGRAMS = {
     # credential; the source data appears to be missing the "R" in "DRIVER".
     ("14903414", "DIVER OPERATOR CT"),
 }
+# VA's own program catalog rarely uses the literal acronym "EMT" for basic
+# EMT training -- it's overwhelmingly spelled out as "EMERGENCY MEDICAL
+# TECHNICIAN" or "EMERGENCY MEDICAL SERVICES" (e.g. Chabot College, Merritt
+# College, City College of San Francisco), so a plain "emt" search would
+# otherwise only surface the handful of schools that happen to use the
+# acronym in their own title (e.g. "FIRE FIGHTER EMT ACADEMY"), silently
+# dropping every school that spells the credential out in full. Maps a
+# search term to an equivalent phrase that counts as a genuine match even
+# without the literal acronym.
+TERM_PHRASE_SYNONYMS: dict[str, str] = {
+    "emt": "emergency medical",
+}
+# A single search term whose most common wording in VA's own program titles
+# is a DIFFERENT single word for the same specific credential, not merely a
+# plural/verb-form of the searched term (which _word_variants already
+# handles) and not a fused compound (handled separately below). Narrower
+# than PROGRAM_CONTEXT_EXPANSIONS on purpose: that dict maps a broad field
+# ("aviation") to every related word, including generic ones ("aircraft")
+# that dominate a DIFFERENT specific credential within the same field
+# (aircraft maintenance/mechanic programs, not piloting) -- reusing it here
+# for retrieval was tried and made a "pilot" search return every aircraft
+# maintenance program in the state. This dict instead pairs only terms
+# confirmed to mean the same specific credential:
+# "pilot" <-> "flight", since a school's own title is inconsistent about
+# which one it uses for the same learn-to-fly program ("AS PILOT TRAINING"
+# at Glendale CC vs. "AS COMMERCIAL FLIGHT" at Mt. San Antonio College,
+# "BS AVIATION FLIGHT" at California Baptist University -- none of which a
+# literal "pilot" search alone would find).
+RETRIEVAL_TERM_SYNONYMS: dict[str, set[str]] = {
+    "pilot": {"flight"},
+    "flight": {"pilot"},
+    # A veteran searching "trucking" is looking for the same programs VA's
+    # catalog almost always titles by the credential's own name, "CDL"
+    # (Commercial Driver's License) -- e.g. "CDL A CERT", "TRACTOR AND
+    # TRAILER OPERATIONS-CDL", "PROFESSIONAL DRIVER TRAINING CDL". A plain
+    # "trucking" search finds only 6 schools nationwide despite 200+
+    # approved CDL programs; adding the synonym here brings all of them in.
+    "trucking": {"cdl"},
+}
+# A retrieval synonym above can itself collide with a different, unrelated
+# credential: "flight" also appears in "FLIGHT ATTENDANT" programs (cabin
+# crew, not piloting), which would otherwise get pulled into a "pilot"
+# search purely because it shares the synonym word. Maps a search term to
+# the marker(s) that disqualify a match pulled in only via
+# RETRIEVAL_TERM_SYNONYMS for that term -- same shape as
+# DIVERSITY_FALSE_POSITIVE_MARKERS above, but keyed per term since each
+# synonym pair can have its own unrelated-credential collision.
+FIELD_EXPANSION_FALSE_POSITIVE_MARKERS: dict[str, set[str]] = {
+    "pilot": {"attendant", "engineering"},
+    "flight": {"attendant", "engineering"},
+}
 
 
 def _normalized(value: str) -> str:
@@ -76,6 +149,44 @@ def _number(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _format_address(attributes: dict[str, Any]) -> str | None:
+    """One-line street address from the VA API's institution attributes,
+    preferring the physical address over the mailing address."""
+    street = str(
+        attributes.get("physical_address_1") or attributes.get("address_1") or ""
+    ).strip()
+    city = str(attributes.get("physical_city") or attributes.get("city") or "").strip()
+    state = str(attributes.get("physical_state") or attributes.get("state") or "").strip()
+    zip_code = str(attributes.get("physical_zip") or attributes.get("zip") or "").strip()
+    state_zip = " ".join(part for part in (state.upper(), zip_code) if part)
+    city_state_zip = ", ".join(part for part in (city.title(), state_zip) if part)
+    if not street and not city_state_zip:
+        return None
+    return ", ".join(part for part in (street.title(), city_state_zip) if part)
+
+
+# A closed compound like "divemaster" (diver + master, a real scuba
+# certification title) is a genuine match for "diver"/"dive"/"diving" that no
+# suffix rule below can produce, since the whole-word check in programs_for
+# requires a boundary right after the matched root (see DIVEMASTER missing
+# from a "diver" search until this was added). Unlike that boundary check,
+# blanket-allowing any trailing text after the root would also re-admit
+# "diversity"/"biodiversity"/"diversified", which are common in unrelated
+# program titles -- so this is a small curated list of confirmed compounds,
+# the same spirit as KNOWN_FALSE_POSITIVE_PROGRAMS below but for inclusions.
+KNOWN_COMPOUND_VARIANTS: dict[str, set[str]] = {
+    "dive": {"divemaster"},
+    "diver": {"divemaster"},
+    "diving": {"divemaster"},
+    "dived": {"divemaster"},
+    # "BSC" (e.g. Santa Clara University's "BSC MARKETING") is a genuine BS
+    # variant, unlike "BSN" (Bachelor of Science in Nursing) -- an explicit
+    # variant here, rather than a general one-trailing-character allowance,
+    # catches BSC without also matching BSN under an exact-word "bs" search.
+    "bs": {"bsc"},
+}
 
 
 def _word_variants(term: str) -> list[str]:
@@ -95,6 +206,7 @@ def _word_variants(term: str) -> list[str]:
     if term.endswith("ed") and len(term) > 4 and not term.endswith("eed"):
         root = term[:-2]
         variants.update({root, root + "er", root + "ing"})
+    variants.update(KNOWN_COMPOUND_VARIANTS.get(term, set()))
     return sorted(variants)
 
 
@@ -118,6 +230,8 @@ class VaComparison:
         self.cities: list[tuple[str, str, str]] = []
         self._embedder: Any = None
         self._query_cache: dict[str, Any] = {}
+        self._program_embedding_descriptions: list[str] | None = None
+        self._program_embedding_matrix: Any = None
 
     def load(self) -> None:
         if not self.path.exists():
@@ -142,6 +256,7 @@ class VaComparison:
 
     async def provider_details(
         self, facility_code: str, context: str = "", *, ttl_seconds: int = 7 * 24 * 60 * 60,
+        required: set[str] | None = None,
     ) -> dict[str, Any] | None:
         payload = await self._provider_payload(facility_code, ttl_seconds)
         if payload is None:
@@ -168,6 +283,15 @@ class VaComparison:
         }
         for term in list(terms):
             terms.update(PROGRAM_CONTEXT_EXPANSIONS.get(term, set()))
+        # A facility reached via find_va_programs already has its genuinely
+        # matched program(s) confirmed by that search's own FTS/word-variant
+        # pipeline -- a strictly more precise relevance signal than this
+        # function's plain word-overlap scoring below, which can rank an
+        # unrelated program ahead of it (for instance one that merely shares
+        # a literal word with the searched city or state name) and bump it
+        # out of the shown sample. Those confirmed matches are guaranteed a
+        # slot rather than just another scoring input.
+        required_normalized = {_normalized(item) for item in (required or set())}
         summaries = []
         for program_type in attributes.get("program_types") or programs:
             code = str(program_type).upper()
@@ -190,9 +314,16 @@ class VaComparison:
                         category_counts[category] = category_counts.get(category, 0) + 1
                     ranked.append((score, position, description, category))
             matches = [item for item in ranked if item[0] > 0]
-            chosen = sorted(matches, key=lambda item: (-item[0], item[1]))[:6]
+            required_items = [
+                item for item in ranked if _normalized(item[2]) in required_normalized
+            ]
+            required_descriptions = {item[2] for item in required_items}
+            remaining = [item for item in matches if item[2] not in required_descriptions]
+            chosen = (
+                required_items + sorted(remaining, key=lambda item: (-item[0], item[1]))
+            )[:6]
             selection = "relevant"
-            if not terms:
+            if not terms and not required_items:
                 chosen = ranked[:6]
                 selection = "all"
             elif not chosen:
@@ -206,12 +337,26 @@ class VaComparison:
                 "selection": selection,
                 "category_counts": category_counts,
                 "programs": [
-                    {"name": item[2], "category": item[3]}
+                    {
+                        "name": item[2], "category": item[3],
+                        # True when this program genuinely matched the
+                        # search context -- the same scoring used to choose
+                        # and rank the programs above (word-overlap against
+                        # terms/PROGRAM_CONTEXT_EXPANSIONS, or a required
+                        # item confirmed by find_va_programs' own FTS
+                        # pipeline) -- not just "was shown", since a
+                        # "sample"/"all" selection shows programs with no
+                        # real match at all. Lets the frontend highlight
+                        # only the programs that actually matched what was
+                        # searched for.
+                        "matched": item[0] > 0 or item[2] in required_descriptions,
+                    }
                     for item in chosen
                 ],
             })
-        return {
+        result = {
             "facility_code": attributes.get("facility_code") or facility_code,
+            "address": _format_address(attributes),
             "contact": contact,
             "monthly_housing_rate": _number(attributes.get("bah")),
             "estimated_housing_allowance": _number(attributes.get("dod_bah")),
@@ -224,6 +369,21 @@ class VaComparison:
             "program_summaries": summaries,
             "source_updated_at": attributes.get("updated_at"),
         }
+        # VA's static comparison-tool workbook (facilities.city/state, the
+        # source for a bare facility record) can be stale for a school that's
+        # since relocated, while this live institution API call reflects its
+        # current physical address -- the same "address" string used just
+        # above. Overriding city/state here with that live location, when
+        # available, keeps the LLM's prose (which narrates from these fields)
+        # in agreement with the address actually shown on the provider's
+        # card, instead of naming two different cities for one school.
+        live_city = str(attributes.get("physical_city") or attributes.get("city") or "").strip()
+        live_state = str(attributes.get("physical_state") or attributes.get("state") or "").strip()
+        if live_city:
+            result["city"] = live_city.upper()
+        if live_state:
+            result["state"] = live_state.upper()
+        return result
 
     async def _provider_payload(
         self, facility_code: str, ttl_seconds: int,
@@ -399,6 +559,8 @@ class VaComparison:
             "SELECT latitude, longitude FROM zcta WHERE zip = ?", (zip_code,)
         ).fetchone()
         if center is None:
+            center = self._nearest_zip_by_prefix(zip_code)
+        if center is None:
             return None
         return {
             "label": zip_code,
@@ -408,6 +570,25 @@ class VaComparison:
             "longitude": center["longitude"],
             "representative_zip": zip_code,
         }
+
+    def _nearest_zip_by_prefix(self, zip_code: str) -> sqlite3.Row | None:
+        """Fallback for a ZIP code missing from zcta (the Census ZCTA
+        Gazetteer file it's built from) -- usually a PO-Box-only or other
+        zero-population ZIP Census doesn't assign its own ZCTA centroid to.
+        Confirmed case: 06813 (a Brookfield, CT PO-Box ZIP) is absent even
+        though 06804, Brookfield's regular delivery ZIP, is present. ZIP
+        prefixes are assigned by regional USPS district, so the numerically
+        closest ZIP sharing the same 3-digit prefix is reliably a few miles
+        away at most -- close enough for this tool's proximity search,
+        without needing a full ZIP-to-ZCTA crosswalk data source.
+        """
+        prefix = zip_code[:3]
+        candidates = self._database().execute(
+            "SELECT zip, latitude, longitude FROM zcta WHERE zip LIKE ?", (prefix + "%",)
+        ).fetchall()
+        if not candidates:
+            return None
+        return min(candidates, key=lambda row: abs(int(row["zip"]) - int(zip_code)))
 
     def location_candidates(self, text: str, limit: int = 6) -> list[str]:
         if self.resolve_location(text) is not None:
@@ -518,6 +699,73 @@ class VaComparison:
                 return None
         return self._embedder
 
+    # Below this similarity, a program description is treated as unrelated
+    # rather than a genuine synonym/abbreviation match. Calibrated against
+    # real VA program titles: true synonyms (EMT vs. "EMERGENCY MEDICAL
+    # TECHNICIAN", CNA vs. "CERTIFIED NURSING ASSISTANT", HVAC vs. "HEATING
+    # VENTILATION AND AIR CONDITIONING") scored 0.72-0.87, while the closest
+    # observed false positive (HVAC vs. "AVIATION MAINTENANCE", both
+    # mechanical/technical trades) scored 0.66 -- there is no single
+    # threshold that cleanly separates every case (a weaker true synonym,
+    # CNA vs. "NURSE AIDE TRAINING", scored only 0.65), so this leans toward
+    # precision. That's acceptable because programs_for() only calls this as
+    # a last-resort fallback when its precise word-match search (including
+    # word-form variants, known compounds, and hand-curated phrase synonyms)
+    # already found nothing -- a plausible but uncertain semantic lead beats
+    # telling a veteran no program exists at all.
+    PROGRAM_SEMANTIC_THRESHOLD = 0.68
+
+    def _semantic_program_matches(
+        self, query_text: str, *, limit: int = 200,
+    ) -> list[tuple[str, float]]:
+        """Program descriptions whose meaning resembles query_text, most
+        similar first, using scripts/init-va-program-embeddings.py's
+        precomputed embeddings. Empty if that table hasn't been built yet or
+        the embedding model isn't available."""
+        if not query_text.strip():
+            return []
+        descriptions, matrix = self._program_embedding_index()
+        if matrix is None or not len(descriptions):
+            return []
+        query = self._query_embedding(query_text)
+        if query is None:
+            return []
+        query_norm = float(np.linalg.norm(query))
+        if query_norm == 0:
+            return []
+        similarities = matrix.dot(query) / query_norm
+        candidate_positions = np.where(similarities >= self.PROGRAM_SEMANTIC_THRESHOLD)[0]
+        ranked = sorted(
+            ((float(similarities[i]), descriptions[i]) for i in candidate_positions),
+            key=lambda item: -item[0],
+        )
+        return [(description, score) for score, description in ranked[:limit]]
+
+    def _program_embedding_index(self) -> tuple[list[str], Any]:
+        """Lazily loads and caches every (description, embedding) row as one
+        normalized matrix, so a semantic query is a single matrix-vector
+        product rather than a per-row SQLite round trip. Built once per
+        process; ~237k rows nationwide costs roughly 350MB resident."""
+        if self._program_embedding_matrix is not None:
+            return self._program_embedding_descriptions or [], self._program_embedding_matrix
+        database = self._database()
+        if database.execute(
+            "SELECT name FROM sqlite_master WHERE name = 'program_embeddings'"
+        ).fetchone() is None:
+            self._program_embedding_descriptions = []
+            self._program_embedding_matrix = np.zeros((0, 0), dtype=np.float32)
+            return [], self._program_embedding_matrix
+        rows = database.execute("SELECT description, embedding FROM program_embeddings").fetchall()
+        descriptions = [row[0] for row in rows]
+        vectors = np.stack([
+            np.frombuffer(row[1], dtype=np.float32) for row in rows
+        ]) if rows else np.zeros((0, 384), dtype=np.float32)
+        norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+        norms[norms == 0] = 1
+        self._program_embedding_descriptions = descriptions
+        self._program_embedding_matrix = vectors / norms
+        return descriptions, self._program_embedding_matrix
+
     def nearest_ojt_providers(
         self, latitude: float, longitude: float, *, limit: int = 4,
         max_miles: float = 500,
@@ -540,7 +788,9 @@ class VaComparison:
         return sorted(facilities, key=lambda item: item["distance_miles"])[:limit]
 
     def programs_for(
-        self, keyword: str, *, state: str | None = None, limit: int = 8,
+        self, keyword: str, *, state: str | None = None, limit: int = 8, offset: int = 0,
+        latitude: float | None = None, longitude: float | None = None,
+        max_miles: float | None = None,
     ) -> dict[str, Any]:
         """Search VA's own approved IHL/NCD program catalog for a keyword,
         nationwide or within one state. Built by
@@ -560,7 +810,7 @@ class VaComparison:
             }
         terms = [
             term for term in _normalized(keyword).split()
-            if len(term) >= 3 and term not in PROGRAM_STOP_WORDS
+            if (len(term) >= 3 or term in DEGREE_LEVEL_TERMS) and term not in PROGRAM_STOP_WORDS
         ]
         if not terms:
             return {
@@ -568,18 +818,11 @@ class VaComparison:
                 "source": "VA GI Bill Comparison Tool approved program catalog",
             }
         term_variants = [_word_variants(term) for term in terms]
-        match_query = " AND ".join(
-            "(" + " OR ".join(f'"{variant}"*' for variant in variants) + ")"
-            for variants in term_variants
-        )
-        rows = database.execute(
-            "SELECT facility_code, program_type, description, "
-            "bm25(va_program_search) AS rank FROM va_program_search "
-            "WHERE va_program_search MATCH ? ORDER BY rank",
-            (match_query,),
-        ).fetchall()
-
-        # The FTS5 prefix wildcard above is a raw character-prefix match, so a
+        # See RETRIEVAL_TERM_SYNONYMS -- a same-credential word swap (e.g.
+        # "flight" for a "pilot" search) so a school reached ONLY via the
+        # synonym word actually surfaces in the search in the first place.
+        term_expansions = [RETRIEVAL_TERM_SYNONYMS.get(term, set()) for term in terms]
+        # The FTS5 prefix wildcard below is a raw character-prefix match, so a
         # query for "diver" also matches indexed terms like "diversity" and
         # "diversified" that merely start with the same letters. Require each
         # query term (or one of its word-form variants, such as "diving" for
@@ -587,57 +830,277 @@ class VaComparison:
         # a plural "s") in the actual description before counting it as a
         # genuine match.
         word_pattern_groups = [
-            [re.compile(rf"\b{re.escape(variant)}\w?\b", re.I) for variant in variants]
-            for variants in term_variants
-        ]
-        rows = [
-            row for row in rows
-            if all(
-                any(pattern.search(row[2]) for pattern in group)
-                for group in word_pattern_groups
-            )
-            and (row[0], row[2]) not in KNOWN_FALSE_POSITIVE_PROGRAMS
-        ]
-        if any(term.startswith("div") for term in terms):
-            rows = [
-                row for row in rows
-                if not any(marker in row[2].lower() for marker in DIVERSITY_FALSE_POSITIVE_MARKERS)
+            [
+                # A short degree/credential abbreviation (e.g. "bs") must
+                # match exactly -- the trailing \w? tolerance below exists
+                # for an ordinary word's plural ("diver" -> "divers"), but
+                # for a 2-3 letter code it would also accept an unrelated,
+                # longer credential that merely starts with the same
+                # letters (e.g. "bs" matching "BSN", Bachelor of Science in
+                # Nursing, defeating the point of an explicit "bs" search).
+                re.compile(rf"\b{re.escape(variant)}\b", re.I)
+                if term in DEGREE_LEVEL_TERMS
+                else re.compile(rf"\b{re.escape(variant)}\w?\b", re.I)
+                for variant in variants
+            ] + (
+                [re.compile(rf"\b{re.escape(TERM_PHRASE_SYNONYMS[term])}\b", re.I)]
+                if term in TERM_PHRASE_SYNONYMS else []
+            ) + [
+                re.compile(rf"\b{re.escape(expansion)}\w?\b", re.I)
+                for expansion in expansions
             ]
+            for term, variants, expansions in zip(terms, term_variants, term_expansions)
+        ]
+        # A phrase synonym (e.g. "emt" -> "emergency medical") or a field
+        # expansion word (e.g. "flight" for "pilot") only helps once the
+        # FTS5 stage above has actually retrieved the row -- a query for
+        # "emt"*/"pilot"* alone never matches an indexed "emergency"/"flight"
+        # token, so each has to be added to that term's FTS clause too, kept
+        # separate from term_variants (used for the whole-word regex above)
+        # so the acronym-only variants there stay exact.
+        fts_term_variants = [
+            (
+                variants + [TERM_PHRASE_SYNONYMS[term].split()[0]] if term in TERM_PHRASE_SYNONYMS
+                else variants
+            ) + list(expansions)
+            for term, variants, expansions in zip(terms, term_variants, term_expansions)
+        ]
+        # A multi-word query like "fire fighter" is sometimes written as one
+        # fused compound word in VA's own data ("FIREFIGHTER"), with no space
+        # or other separator between the two terms. Neither term then matches
+        # as an isolated whole word: "fire" is immediately followed by more
+        # word characters ("fighter"), so \bfire\w?\b never finds a boundary,
+        # and likewise "fighter" is never preceded by one. FTS5 prefix search
+        # only compounds the problem for a strict all-terms-required query --
+        # "fighter"* has no token in "FIREFIGHTER ACADEMY" that starts with
+        # "fighter" (the row's only tokens are "firefighter" and "academy"),
+        # so that row is never even retrieved, regardless of the regex step
+        # below. Both the retrieval query and the whole-word check need a
+        # concatenated-compound escape hatch, or a plainly-relevant result
+        # like Chabot College's "FIRE FIGHTER ACADEMY"... sorry, "FIREFIGHTER
+        # ACADEMY" silently vanishes from a "fire fighter" search.
+        concatenated_term = "".join(terms) if len(terms) > 1 else None
+        concatenated_pattern = (
+            re.compile(rf"\b{re.escape(concatenated_term)}\w?\b", re.I)
+            if concatenated_term else None
+        )
 
-        grouped: dict[str, dict[str, Any]] = {}
+        by_distance = latitude is not None and longitude is not None
         facility_cache: dict[str, sqlite3.Row | None] = {}
-        for facility_code, program_type, description, rank in rows:
-            if facility_code not in facility_cache:
-                facility_cache[facility_code] = database.execute(
-                    "SELECT * FROM facilities WHERE facility_code = ? AND approved = 1",
-                    (facility_code,),
-                ).fetchone()
-            facility_row = facility_cache[facility_code]
-            if facility_row is None:
-                continue
-            if state and facility_row["state"] != state.upper():
-                continue
-            entry = grouped.setdefault(facility_code, {
-                "facility": self._record(facility_row),
-                "matching_programs": [],
-                "best_rank": rank,
-            })
-            entry["matching_programs"].append({"type": program_type, "description": description})
-            entry["best_rank"] = min(entry["best_rank"], rank)
+        distance_cache: dict[str, float | None] = {}
 
-        ordered = sorted(grouped.values(), key=lambda item: item["best_rank"])
+        def _pipeline(*, require_all: bool) -> list[dict[str, Any]]:
+            match_query = (
+                " AND ".join(
+                    "(" + " OR ".join(f'"{variant}"*' for variant in variants) + ")"
+                    for variants in fts_term_variants
+                )
+                if require_all
+                else " OR ".join(
+                    f'"{variant}"*' for variants in fts_term_variants for variant in variants
+                )
+            )
+            if concatenated_term:
+                match_query = f'({match_query}) OR "{concatenated_term}"*'
+            found = database.execute(
+                "SELECT facility_code, program_type, description, "
+                "bm25(va_program_search) AS rank FROM va_program_search "
+                "WHERE va_program_search MATCH ? ORDER BY rank",
+                (match_query,),
+            ).fetchall()
+            combine = all if require_all else any
+            rows = [
+                row for row in found
+                if (
+                    combine(
+                        any(pattern.search(row[2]) for pattern in group)
+                        for group in word_pattern_groups
+                    )
+                    or (concatenated_pattern is not None and concatenated_pattern.search(row[2]))
+                )
+                and (row[0], row[2]) not in KNOWN_FALSE_POSITIVE_PROGRAMS
+            ]
+            if any(term.startswith("div") for term in terms):
+                rows = [
+                    row for row in rows
+                    if not any(marker in row[2].lower() for marker in DIVERSITY_FALSE_POSITIVE_MARKERS)
+                ]
+            expansion_markers = {
+                marker
+                for term in terms
+                for marker in FIELD_EXPANSION_FALSE_POSITIVE_MARKERS.get(term, set())
+            }
+            if expansion_markers:
+                rows = [
+                    row for row in rows
+                    if not any(marker in row[2].lower() for marker in expansion_markers)
+                ]
+
+            grouped: dict[str, dict[str, Any]] = {}
+            for facility_code, program_type, description, rank in rows:
+                if facility_code not in facility_cache:
+                    facility_cache[facility_code] = database.execute(
+                        "SELECT * FROM facilities WHERE facility_code = ? AND approved = 1",
+                        (facility_code,),
+                    ).fetchone()
+                facility_row = facility_cache[facility_code]
+                if facility_row is None:
+                    continue
+                if state and facility_row["state"] != state.upper():
+                    continue
+                if by_distance:
+                    if facility_code not in distance_cache:
+                        if facility_row["latitude"] is None or facility_row["longitude"] is None:
+                            distance_cache[facility_code] = None
+                        else:
+                            distance_cache[facility_code] = _distance_miles(
+                                latitude, longitude, facility_row["latitude"], facility_row["longitude"],
+                            )
+                    distance = distance_cache[facility_code]
+                    # A facility with no usable coordinates (missing/unrecognized
+                    # ZIP -- mostly overseas schools, see app/va.py facilities
+                    # table) can't be placed relative to the search location, so
+                    # it's excluded rather than kept with an unknown distance.
+                    if distance is None:
+                        continue
+                    if max_miles is not None and distance > max_miles:
+                        continue
+                else:
+                    distance = None
+                if facility_code not in grouped:
+                    # self._record() issues its own DB lookups (website/apply
+                    # guesses) -- call it once per facility, not once per
+                    # matching program row, which dict.setdefault() would
+                    # otherwise do since it evaluates its default argument
+                    # unconditionally on every call.
+                    grouped[facility_code] = {
+                        "facility": self._record(facility_row, distance),
+                        "matching_programs": [],
+                        "best_rank": rank,
+                        "match_count": 0,
+                        "distance": distance,
+                    }
+                entry = grouped[facility_code]
+                entry["matching_programs"].append({"type": program_type, "description": description})
+                entry["best_rank"] = min(entry["best_rank"], rank)
+                if not require_all:
+                    # bm25 has no notion of "satisfies more of the original
+                    # query terms", so an OR fallback match (e.g. "auto
+                    # mechanic" relaxed to auto-or-mechanic) is ranked on how
+                    # many of the original terms this specific row actually
+                    # satisfies before falling back to bm25 as a tie-break --
+                    # otherwise a single-term match could outrank a result
+                    # satisfying every term just because of its raw bm25 rank.
+                    match_count = sum(
+                        any(pattern.search(description) for pattern in group)
+                        for group in word_pattern_groups
+                    )
+                    entry["match_count"] = max(entry["match_count"], match_count)
+
+            if not require_all:
+                if by_distance:
+                    return sorted(
+                        grouped.values(),
+                        key=lambda item: (item["distance"], -item["match_count"], item["best_rank"]),
+                    )
+                return sorted(
+                    grouped.values(), key=lambda item: (-item["match_count"], item["best_rank"]),
+                )
+            if by_distance:
+                return sorted(grouped.values(), key=lambda item: (item["distance"], item["best_rank"]))
+            return sorted(grouped.values(), key=lambda item: item["best_rank"])
+
+        def _semantic_pipeline() -> list[dict[str, Any]]:
+            """Last-resort fallback when the precise word-match search above
+            (variants, known compounds, hand-curated phrase synonyms) found
+            nothing at all: match by MEANING against every distinct program
+            description nationwide (see _semantic_program_matches), so a
+            genuine synonym/abbreviation the precise search has no rule for
+            yet -- CNA, HVAC, CDL, or whatever's reported next -- still
+            surfaces without needing its own hand-written exception."""
+            matches = self._semantic_program_matches(keyword)
+            if not matches:
+                return []
+            description_scores = dict(matches)
+            placeholders = ",".join("?" for _ in description_scores)
+            found = database.execute(
+                "SELECT facility_code, program_type, description FROM va_program_search "
+                f"WHERE description IN ({placeholders})",
+                tuple(description_scores),
+            ).fetchall()
+            grouped: dict[str, dict[str, Any]] = {}
+            for facility_code, program_type, description in found:
+                if (facility_code, description) in KNOWN_FALSE_POSITIVE_PROGRAMS:
+                    continue
+                if facility_code not in facility_cache:
+                    facility_cache[facility_code] = database.execute(
+                        "SELECT * FROM facilities WHERE facility_code = ? AND approved = 1",
+                        (facility_code,),
+                    ).fetchone()
+                facility_row = facility_cache[facility_code]
+                if facility_row is None:
+                    continue
+                if state and facility_row["state"] != state.upper():
+                    continue
+                if by_distance:
+                    if facility_code not in distance_cache:
+                        if facility_row["latitude"] is None or facility_row["longitude"] is None:
+                            distance_cache[facility_code] = None
+                        else:
+                            distance_cache[facility_code] = _distance_miles(
+                                latitude, longitude, facility_row["latitude"], facility_row["longitude"],
+                            )
+                    distance = distance_cache[facility_code]
+                    if distance is None:
+                        continue
+                    if max_miles is not None and distance > max_miles:
+                        continue
+                else:
+                    distance = None
+                score = description_scores[description]
+                if facility_code not in grouped:
+                    record = self._record(facility_row, distance)
+                    record["match_type"] = "semantic"
+                    grouped[facility_code] = {
+                        "facility": record, "matching_programs": [], "best_score": score,
+                        "distance": distance,
+                    }
+                entry = grouped[facility_code]
+                entry["matching_programs"].append({"type": program_type, "description": description})
+                entry["best_score"] = max(entry["best_score"], score)
+            if by_distance:
+                return sorted(grouped.values(), key=lambda item: (item["distance"], -item["best_score"]))
+            return sorted(grouped.values(), key=lambda item: -item["best_score"])
+
+        ordered = _pipeline(require_all=True)
+        # A plain-English multi-word trade query (e.g. "auto mechanic") can
+        # legitimately return nothing near the searched location under a
+        # strict all-terms-required search, because VA program titles often
+        # use different wording for the same trade (e.g. "AUTOMOTIVE
+        # TECHNOLOGY", never "mechanic") -- there is no dedicated fallback
+        # source like find_local_training has for these results, so an empty
+        # strict search here can silently tell a veteran no program exists
+        # for a trade that plainly has several approved schools nearby. When
+        # that happens with more than one search term, retry once requiring
+        # only ANY term to genuinely match.
+        if not ordered and len(term_variants) > 1:
+            ordered = _pipeline(require_all=False)
+        if not ordered:
+            ordered = _semantic_pipeline()
         results = [
             {
                 **item["facility"],
                 "matching_programs": item["matching_programs"][:6],
                 "matching_program_count": len(item["matching_programs"]),
             }
-            for item in ordered[:limit]
+            for item in ordered[offset:offset + limit]
         ]
         return {
             "total_facilities": len(ordered),
             "total_programs": sum(len(item["matching_programs"]) for item in ordered),
             "facilities": results,
+            "offset": offset,
+            "remaining_facilities": max(0, len(ordered) - offset - len(results)),
             "source": "VA GI Bill Comparison Tool approved program catalog",
         }
 
@@ -656,9 +1119,9 @@ class VaComparison:
         return best
 
     def _record(self, row: sqlite3.Row, distance: float | None = None) -> dict[str, Any]:
+        database = self._database()
         guessed_website = None
         if not row["insturl"]:
-            database = self._database()
             if database.execute(
                 "SELECT name FROM sqlite_master WHERE name = 'va_website_guesses'"
             ).fetchone() is not None:
@@ -667,6 +1130,16 @@ class VaComparison:
                     (row["facility_code"],),
                 ).fetchone()
                 guessed_website = guess[0] if guess else None
+        apply_url = apply_label = None
+        if database.execute(
+            "SELECT name FROM sqlite_master WHERE name = 'va_admissions_guesses'"
+        ).fetchone() is not None:
+            apply = database.execute(
+                "SELECT url, label FROM va_admissions_guesses WHERE facility_code = ?",
+                (row["facility_code"],),
+            ).fetchone()
+            if apply:
+                apply_url, apply_label = apply
         return {
             "facility_code": row["facility_code"],
             "detail_url": (
@@ -688,6 +1161,16 @@ class VaComparison:
             # it's surfaced; see the "Unverified school link" handling in
             # app/agent.py.
             "guessed_website": guessed_website,
+            # Found offline by scripts/init-va-admissions-guesses.py (crawls
+            # the school's own known website, VA-confirmed or guessed, once
+            # for its apply/admissions page) or, when that found nothing,
+            # scripts/init-va-apply-path-guesses.py (tries a plain "/apply"
+            # path directly). Not VA-confirmed and may go stale if the school
+            # redesigns its site -- present it as an "Apply" link to the
+            # school's own admissions page, not a guarantee the process still
+            # works exactly as found.
+            "apply_url": apply_url,
+            "apply_label": apply_label,
             "veteran_tuition_policy_url": row["vet_tuition_policy_url"],
             "p911_recipients": row["p911_recipients"],
             "p911_tuition_fees": _number(row["p911_tuition_fees"]),

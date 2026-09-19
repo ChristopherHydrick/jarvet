@@ -3,17 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 from html.parser import HTMLParser
-from typing import Callable
 from urllib.parse import urljoin, urlparse
-
-import httpx
-
-STOP_WORDS = {
-    "and", "at", "college", "general", "of", "program", "school", "technology",
-    "technician", "the", "university",
-}
-
-Fetch = Callable[[str], object]
 
 
 class PageParser(HTMLParser):
@@ -51,167 +41,23 @@ class PageParser(HTMLParser):
             self.current_link["label"] += value + " "
 
 
-def _terms(value: str) -> set[str]:
-    return {
-        term for term in re.findall(r"[a-z0-9]+", value.lower())
-        if len(term) > 2 and term not in STOP_WORDS
-    }
-
-
-def _subject_terms(program: str) -> set[str]:
-    segments = re.split(r"[/,;&()]|\band\b", program.lower())
-    terms = _terms(program)
-    distinctive = {
-        term for segment in segments for term in _terms(segment)
-        if term not in {"general", "technology", "technician"}
-    }
-    return distinctive or terms
-
-
 def _same_site(candidate: str, school_url: str) -> bool:
     candidate_host = urlparse(candidate).hostname or ""
     school_host = urlparse(school_url).hostname or ""
     candidate_host = candidate_host.removeprefix("www.")
     school_host = school_host.removeprefix("www.")
+    # A school's own site can redirect a subdomain registered with VA (e.g.
+    # "worldwide.erau.edu") to its parent domain (e.g. "erau.edu") -- as seen
+    # on every Embry-Riddle campus, whose admissions/apply links all live
+    # under the bare "erau.edu", not the subdomain VA has on file for it.
+    # Accepting only a candidate that's a subdomain of school_url and never
+    # the reverse silently dropped every one of those links, leaving ~150
+    # facilities with no Apply button despite the school plainly having one.
     return bool(candidate_host and school_host) and (
-        candidate_host == school_host or candidate_host.endswith("." + school_host)
+        candidate_host == school_host
+        or candidate_host.endswith("." + school_host)
+        or school_host.endswith("." + candidate_host)
     )
-
-
-async def _safe_fetch(
-    fetch: Callable[[httpx.AsyncClient, str], Awaitable[httpx.Response | None]],
-    client: httpx.AsyncClient, url: str,
-) -> httpx.Response | None:
-    try:
-        return await fetch(client, url)
-    except httpx.HTTPError:
-        return None
-
-
-async def discover_program_page(
-    school: str, program: str, school_url: str,
-    fetch: Callable[[httpx.AsyncClient, str], Awaitable[httpx.Response | None]] | None = None,
-) -> dict[str, str] | None:
-    # Source website fields (VA workbook, IPEDS) often omit the scheme
-    # (e.g. "www.example.edu/"); urlparse treats that as a bare path with no
-    # hostname, so without this it silently bails out before crawling at all.
-    if school_url and not re.match(r"^https?://", school_url, re.I):
-        school_url = f"https://{school_url}"
-    parsed_school = urlparse(school_url)
-    if parsed_school.scheme not in {"http", "https"} or not parsed_school.hostname:
-        return None
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; Jarvet/1.0; program-link-verifier)"}
-
-    async def default_fetch(client: httpx.AsyncClient, url: str) -> httpx.Response | None:
-        return await client.get(url)
-
-    fetch = fetch or default_fetch
-    try:
-        async with httpx.AsyncClient(timeout=12, follow_redirects=True, headers=headers) as client:
-            response = await fetch(client, school_url)
-            if response is None:
-                return None
-            response.raise_for_status()
-            root = PageParser()
-            root.feed(response.text[:1_500_000])
-            subject_terms = _subject_terms(program)
-            discovery_words = re.compile(
-                r"academic|career|catalog|certificate|degree|department|field|program|study",
-                re.I,
-            )
-            ranked_frontier: list[tuple[int, str]] = []
-            for link in root.links:
-                absolute = urljoin(str(response.url), link["url"])
-                label_terms = _terms(link["label"] + " " + absolute)
-                if _same_site(absolute, school_url) and (
-                    subject_terms & label_terms or discovery_words.search(link["label"] + " " + absolute)
-                ):
-                    priority = len(subject_terms & label_terms) * 10
-                    priority += 4 if re.search(r"academic|program|field|study", link["label"] + " " + absolute, re.I) else 0
-                    ranked_frontier.append((priority, absolute))
-            frontier = list(dict.fromkeys(
-                url for _, url in sorted(ranked_frontier, reverse=True)
-            ))[:18]
-
-            scored: list[tuple[float, PageParser, str]] = []
-            visited = {str(response.url).rstrip("/")}
-            for depth in range(2):
-                next_frontier: list[tuple[int, str]] = []
-                candidates = []
-                for url in frontier:
-                    normalized_url = url.rstrip("/")
-                    if normalized_url in visited:
-                        continue
-                    visited.add(normalized_url)
-                    candidates.append(url)
-                responses = await asyncio.gather(*(
-                    _safe_fetch(fetch, client, url) for url in candidates
-                ))
-                for candidate_url, page_response in zip(candidates, responses):
-                    if page_response is None:
-                        continue
-                    content_type = page_response.headers.get("content-type", "")
-                    if "html" not in content_type:
-                        continue
-                    page = PageParser()
-                    page.feed(page_response.text[:1_500_000])
-                    final_url = str(page_response.url)
-                    if not _same_site(final_url, school_url):
-                        continue
-                    heading_text = page.title + " " + " ".join(page.text[:120])
-                    page_terms = _terms(heading_text)
-                    overlap = len(subject_terms & page_terms) / max(len(subject_terms), 1)
-                    identity_terms = _terms(page.title + " " + final_url)
-                    subject_identity = subject_terms & identity_terms
-                    detail_bonus = 0.3 if re.search(
-                        r"degree|certificate|curriculum|course|program", final_url + " " + page.title,
-                        re.I,
-                    ) else 0
-                    score = overlap * 2 + detail_bonus
-                    if overlap >= 0.5 and subject_identity:
-                        scored.append((score, page, final_url))
-                    if depth == 0:
-                        for link in page.links:
-                            absolute = urljoin(final_url, link["url"])
-                            link_terms = _terms(link["label"] + " " + absolute)
-                            if _same_site(absolute, school_url) and (
-                                subject_terms & link_terms or discovery_words.search(link["label"] + " " + absolute)
-                            ):
-                                priority = len(subject_terms & link_terms) * 10
-                                priority += 4 if discovery_words.search(link["label"] + " " + absolute) else 0
-                                next_frontier.append((priority, absolute))
-                frontier = list(dict.fromkeys(
-                    url for _, url in sorted(next_frontier, reverse=True)
-                ))[:24]
-    except httpx.HTTPError:
-        return None
-
-    if not scored:
-        return None
-    _, page, final_url = max(scored, key=lambda item: item[0])
-    detail_links: list[tuple[int, str, str]] = []
-    for link in page.links:
-        absolute = urljoin(final_url, link["url"])
-        if not _same_site(absolute, school_url):
-            continue
-        link_text = link["label"] + " " + absolute
-        retains_subject = bool(subject_terms & _terms(link_text)) or absolute.startswith(final_url)
-        if retains_subject and re.search(
-            r"degree|certificate|curriculum|course|catalog", link_text, re.I
-        ):
-            priority = len(subject_terms & _terms(link_text)) * 10
-            priority += 5 if re.search(r"degree|certificate", link_text, re.I) else 0
-            priority -= 2 if re.search(r"college.catalog|/catalog/?$", link_text, re.I) else 0
-            detail_links.append((priority, link["label"], absolute))
-    preferred = max(detail_links, default=None, key=lambda item: item[0])
-    preferred_url = preferred[2] if preferred else final_url
-    preferred_label = preferred[1] if preferred else page.title.strip()
-    return {
-        "url": preferred_url,
-        "label": preferred_label,
-        "landing_url": final_url,
-        "source": "Official institution website",
-    }
 
 
 ADMISSIONS_WORDS = re.compile(
@@ -219,44 +65,106 @@ ADMISSIONS_WORDS = re.compile(
     r"\bhow\s+to\s+apply\b",
     re.I,
 )
+# A link's label/URL can satisfy ADMISSIONS_WORDS above ("Apply for a Career
+# at Rutgers Newark") while actually being a staff/faculty job-application
+# page, not a student admissions page -- both use the exact same "apply"
+# wording. Employment portals reliably live on their own "careers"/"jobs"
+# subdomain or path segment (a Workday/Taleo-style HR system, distinct from
+# the admissions site), so a candidate matching this is dropped regardless
+# of an otherwise-matching ADMISSIONS_WORDS hit.
+EMPLOYMENT_PAGE_MARKERS = re.compile(
+    r"careers?\.\w|jobs?\.\w|/careers?/|/jobs?/|/employment|human[\s-]?resources|\bhiring\b|"
+    r"\bjob\s+opening|\bwork(?:ing)?\s+at\b|\bstaff\s+position|\bfaculty\s+position",
+    re.I,
+)
 
 
-async def discover_admissions_page(
-    school_url: str,
-    fetch: Callable[[httpx.AsyncClient, str], Awaitable[httpx.Response | None]] | None = None,
-) -> dict[str, str] | None:
-    """Find a school's own apply/admissions page. Unlike discover_program_page,
-    this only looks at links on the homepage itself -- admissions pages are
-    almost always in the main navigation or footer with predictable wording,
-    so a deeper multi-hop crawl isn't needed."""
+_CURL_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+_CURL_META_MARKER = "\x1e__JARVET_CURL_META__"
+
+
+async def _curl_get(url: str, *, timeout: int = 12) -> tuple[int, str, str] | None:
+    """GET a URL via the system curl binary instead of httpx.
+
+    A significant fraction of school sites sit behind bot-management (the
+    kind of WAF Cloudflare/Akamai offer) that fingerprints and blocks
+    httpx's TLS/HTTP client signature specifically, independent of headers
+    sent -- confirmed against real school sites (for example
+    moorparkcollege.edu/apply, which a human browser and curl both load
+    fine but httpx got a bare 403 from, headers and HTTP version made no
+    difference). curl's fingerprint reliably passes, so it's used here
+    instead. Returns (status_code, final_url, body) for the last hop after
+    following redirects, or None if curl itself failed to run or timed out.
+    """
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "curl", "-s", "-L", "--max-time", str(timeout),
+            "-A", _CURL_USER_AGENT,
+            "-w", _CURL_META_MARKER + "%{http_code}|%{url_effective}",
+            url,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=timeout + 5)
+    except (OSError, asyncio.TimeoutError):
+        return None
+    output = stdout.decode("utf-8", errors="replace")
+    if _CURL_META_MARKER not in output:
+        return None
+    body, _, meta = output.rpartition(_CURL_META_MARKER)
+    try:
+        status_text, final_url = meta.split("|", 1)
+        return int(status_text), final_url.strip(), body
+    except ValueError:
+        return None
+
+
+async def discover_admissions_page(school_url: str) -> dict[str, str] | None:
+    """Find a school's own apply/admissions page. Only looks at links on the
+    homepage itself -- admissions pages are almost always in the main
+    navigation or footer with predictable wording, so a deeper multi-hop
+    crawl isn't needed. Fetches via curl (see _curl_get) rather than an
+    httpx client, since a large share of school sites' bot-management
+    blocks httpx specifically."""
     if school_url and not re.match(r"^https?://", school_url, re.I):
         school_url = f"https://{school_url}"
     parsed_school = urlparse(school_url)
     if parsed_school.scheme not in {"http", "https"} or not parsed_school.hostname:
         return None
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; Jarvet/1.0; program-link-verifier)"}
-
-    async def default_fetch(client: httpx.AsyncClient, url: str) -> httpx.Response | None:
-        return await client.get(url)
-
-    fetch = fetch or default_fetch
-    try:
-        async with httpx.AsyncClient(timeout=12, follow_redirects=True, headers=headers) as client:
-            response = await fetch(client, school_url)
-            if response is None:
-                return None
-            response.raise_for_status()
-            root = PageParser()
-            root.feed(response.text[:1_500_000])
-    except httpx.HTTPError:
+    fetched = await _curl_get(school_url)
+    if fetched is None:
         return None
+    status, final_url, body = fetched
+    if status >= 400:
+        return None
+    root = PageParser()
+    root.feed(body[:1_500_000])
+    # A link's own path, ignoring any query/fragment, once resolved against
+    # the page it was found on -- used below to reject a candidate that only
+    # points back to this same homepage.
+    homepage_path = urlparse(final_url).path.rstrip("/")
 
     candidates: list[tuple[int, str, str]] = []
     for link in root.links:
-        absolute = urljoin(str(response.url), link["url"])
+        absolute = urljoin(final_url, link["url"])
         if not _same_site(absolute, school_url):
             continue
+        if urlparse(absolute).path.rstrip("/") == homepage_path:
+            # Common on sites that build their nav as a Bootstrap-style
+            # dropdown: the visible toggle button itself is an <a> tagged
+            # href="#" and labeled "Apply Today"/"Apply Now", with the real
+            # destination link only appearing once the dropdown is opened
+            # (confirmed on evc.edu: a "Apply Today" href="#" dropdown
+            # toggle sits ahead of the genuine "Apply Now" link to
+            # /services/admissions/apply.html later in the same page).
+            # Accepting the toggle silently sends a veteran back to the
+            # homepage they were already on instead of an application.
+            continue
         text = link["label"] + " " + absolute
+        if EMPLOYMENT_PAGE_MARKERS.search(text):
+            continue
         if ADMISSIONS_WORDS.search(text):
             priority = 2 if re.search(r"\bapply\b|\bhow\s+to\s+apply\b", text, re.I) else 1
             candidates.append((priority, link["label"].strip() or "Apply", absolute))
@@ -266,26 +174,49 @@ async def discover_admissions_page(
     return {"url": url, "label": label, "source": "Official institution website"}
 
 
-async def discover_program_pages(
-    programs: list[dict[str, str]],
-    fetch: Callable[[httpx.AsyncClient, str], Awaitable[httpx.Response | None]] | None = None,
-) -> list[dict[str, str]]:
-    discoveries = await asyncio.gather(*(
-        discover_program_page(
-            program["school"], program["program"], program.get("url", ""), fetch,
-        )
-        for program in programs
-    ))
-    enriched = []
-    for program, discovery in zip(programs, discoveries):
-        item = dict(program)
-        item["school_url"] = item.pop("url", "")
-        if discovery:
-            item["program_url"] = discovery["url"]
-            item["program_page_label"] = discovery["label"]
-            item["program_landing_url"] = discovery["landing_url"]
-            item["link_status"] = "verified_official_program_page"
-        else:
-            item["link_status"] = "source_listing_only"
-        enriched.append(item)
-    return enriched
+async def guess_apply_path(school_url: str) -> dict[str, str] | None:
+    """Fallback for when discover_admissions_page finds no admissions link on
+    the homepage itself: many school sites answer a plain "/apply" path
+    directly (for example moorparkcollege.edu/apply) even without linking to
+    it from the homepage nav. Only counts as a match if that path actually
+    resolves to a distinct, application-flavored page of its own -- a site
+    with no such path commonly either 200s a generic catch-all/"not found"
+    template for any unknown path, or silently redirects back to its own
+    homepage, and neither should be reported as a found apply page. The
+    catch-all case is caught by comparing the page against a second fetch of
+    a deliberately bogus path on the same host: a site that serves the same
+    templated response for both is not actually answering "/apply"
+    specifically.
+    """
+    if school_url and not re.match(r"^https?://", school_url, re.I):
+        school_url = f"https://{school_url}"
+    parsed_school = urlparse(school_url)
+    if parsed_school.scheme not in {"http", "https"} or not parsed_school.hostname:
+        return None
+    candidate_url = urljoin(school_url, "/apply")
+    fetched = await _curl_get(candidate_url)
+    if fetched is None:
+        return None
+    status, final_url, body = fetched
+    if status >= 400:
+        return None
+    landed = urlparse(final_url)
+    if landed.path.strip("/") == "" or not _same_site(final_url, school_url):
+        # Landed back on the homepage root, or off-site entirely -- not a
+        # real distinct /apply page.
+        return None
+    page = PageParser()
+    page.feed(body[:1_500_000])
+    haystack = page.title + " " + " ".join(page.text[:20]) + " " + final_url
+    if EMPLOYMENT_PAGE_MARKERS.search(haystack) or not ADMISSIONS_WORDS.search(haystack):
+        return None
+    probe = await _curl_get(urljoin(school_url, "/jarvet-apply-probe-nonexistent-8f3c1d"))
+    if probe is not None and probe[0] < 400 and probe[2][:2000] == body[:2000]:
+        # The site answered our made-up path with byte-identical content --
+        # a catch-all/soft-404 template, so "/apply" isn't a real page.
+        return None
+    return {
+        "url": final_url,
+        "label": page.title.strip() or "Apply",
+        "source": "Guessed /apply path",
+    }
