@@ -180,6 +180,30 @@ Like the programs crawl, this is not run by `postCreateCommand.sh`:
 .venv/bin/python scripts/init-va-program-embeddings.py
 ```
 
+### Monthly refresh
+
+VA approves and drops schools and programs every month.
+`scripts/monthly-refresh.py` refreshes all of the above together: the VA
+workbook (school list), every approved school's programs, the keyword and
+meaning-based indexes, and each program's field of study
+(`scripts/init-va-program-fields.py`). Run it from the project root with
+Windows Python, in three steps:
+
+```bash
+python scripts/monthly-refresh.py prepare   # ~45 min; the app keeps running
+python scripts/monthly-refresh.py report    # what changed, plus the database checks
+python scripts/monthly-refresh.py apply     # stop, back up, copy in, check, restart
+```
+
+`prepare` works only on a snapshot in `$CACHE_BACKUP_DIR/refresh/` (slow steps
+run in throwaway `jarvet-dev` containers) and resumes where it left off if
+interrupted; `prepare --restart` starts a new refresh. Read the `report`
+before applying: a check in `scripts/search-checks.json` whose count moved
+because schools really changed gets its expected number updated; anything
+else is a bug to look into first. `apply` replaces only the refreshed tables
+in the live database, so hand corrections, website/apply-link guesses and
+saved school details are kept, and it refuses to write while the app is up.
+
 ## School program data (IPEDS)
 
 Initialization downloads the NCES IPEDS institutional directory (HD2024) and

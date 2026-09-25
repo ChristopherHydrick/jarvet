@@ -20,6 +20,7 @@ search even though they hold real VA-approved pilot training programs.
 from __future__ import annotations
 
 import asyncio
+import os
 import sqlite3
 import sys
 import time
@@ -28,7 +29,8 @@ from pathlib import Path
 import httpx
 
 ROOT = Path(__file__).resolve().parent.parent
-DATABASE = ROOT / ".cache" / "va-comparison.sqlite"
+# JARVET_VA_DB: a working copy (see scripts/monthly-refresh.py).
+DATABASE = Path(os.environ.get("JARVET_VA_DB") or ROOT / ".cache" / "va-comparison.sqlite")
 PROGRAM_TYPES = ("IHL", "NCD", "FLGT")
 CONCURRENCY = 20
 BATCH_COMMIT = 200
@@ -200,6 +202,14 @@ def main() -> None:
     args = sys.argv[1:]
     flight_only = "--flight-only" in args
     args = [a for a in args if a != "--flight-only"]
+    # --since EPOCH: a refresh. Facilities fetched before EPOCH count as not
+    # done yet, so everything is re-fetched once, and re-running with the
+    # same EPOCH resumes (or retries failures) instead of starting over.
+    since = 0
+    if "--since" in args:
+        position = args.index("--since")
+        since = int(args[position + 1])
+        del args[position:position + 2]
     test_limit = int(args[0]) if args else None
 
     connection = sqlite3.connect(DATABASE)
@@ -220,7 +230,9 @@ def main() -> None:
         asyncio.run(crawl(connection, test_limit, facility_codes, ("FLGT",), False))
     else:
         already_done = {
-            row[0] for row in connection.execute("SELECT facility_code FROM va_programs_crawl_state")
+            row[0] for row in connection.execute(
+                "SELECT facility_code FROM va_programs_crawl_state WHERE fetched_at >= ?", (since,)
+            )
         }
         facility_codes = [
             row[0] for row in connection.execute(

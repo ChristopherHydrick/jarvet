@@ -321,8 +321,10 @@ def compute(source: Path, ipeds_path: Path, out: Path) -> None:
     print("done:", dict(counts), flush=True)
 
 
-def write(input_path: Path) -> None:
-    if subprocess.run(
+def write(input_path: Path, database: Path = DATABASE) -> None:
+    # A working copy (scripts/monthly-refresh.py) isn't open in the app, so
+    # only the live file needs the app stopped.
+    if database.resolve() == DATABASE.resolve() and subprocess.run(
         ["docker", "ps", "-q", "--filter", "name=^jarvet$"], capture_output=True, text=True,
     ).stdout.strip():
         sys.exit("jarvet container is running -- stop it before writing to the database")
@@ -330,7 +332,7 @@ def write(input_path: Path) -> None:
         adjusted(json.loads(line))
         for line in input_path.read_text(encoding="utf-8").splitlines() if line
     ]
-    connection = sqlite3.connect(DATABASE, timeout=30)
+    connection = sqlite3.connect(database, timeout=30)
     try:
         with connection:
             connection.execute("DROP TABLE IF EXISTS va_program_fields")
@@ -373,11 +375,12 @@ def main() -> None:
     compute_parser.add_argument("--out", type=Path, required=True)
     write_parser = commands.add_parser("write")
     write_parser.add_argument("--input", type=Path, required=True)
+    write_parser.add_argument("--db", type=Path, default=DATABASE)
     arguments = parser.parse_args()
     if arguments.command == "compute":
         compute(arguments.source, arguments.ipeds, arguments.out)
     else:
-        write(arguments.input)
+        write(arguments.input, arguments.db)
 
 
 if __name__ == "__main__":

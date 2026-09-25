@@ -10,10 +10,13 @@ from zipfile import ZipFile
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE_DIR = ROOT / "data" / "va-comparison"
-WORKBOOK = SOURCE_DIR / "ComparisonToolData.xlsx"
+# The JARVET_VA_* overrides let scripts/monthly-refresh.py rebuild a working
+# copy of the database from a freshly downloaded workbook while the live file
+# (and the app using it) stay untouched.
+WORKBOOK = Path(os.environ.get("JARVET_VA_WORKBOOK") or SOURCE_DIR / "ComparisonToolData.xlsx")
 ZCTA_ARCHIVE = SOURCE_DIR / "2025_Gaz_zcta_national.zip"
-DATABASE = ROOT / ".cache" / "va-comparison.sqlite"
-MARKER = ROOT / ".cache" / "va-comparison.ready"
+DATABASE = Path(os.environ.get("JARVET_VA_DB") or ROOT / ".cache" / "va-comparison.sqlite")
+MARKER = Path(os.environ.get("JARVET_VA_MARKER") or ROOT / ".cache" / "va-comparison.ready")
 INDEX_VERSION = 3
 XML_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 
@@ -93,13 +96,17 @@ def as_float(value: str) -> float | None:
         return None
 
 
-def build_database() -> None:
-    if not WORKBOOK.exists() or not ZCTA_ARCHIVE.exists():
-        raise SystemExit("VA Comparison Tool or Census ZCTA data is missing. Run init-onet-data.sh.")
-    marker = (
+def marker_text() -> str:
+    return (
         f"{INDEX_VERSION}:{WORKBOOK.stat().st_size}:{WORKBOOK.stat().st_mtime_ns}:"
         f"{ZCTA_ARCHIVE.stat().st_size}:{ZCTA_ARCHIVE.stat().st_mtime_ns}"
     )
+
+
+def build_database() -> None:
+    if not WORKBOOK.exists() or not ZCTA_ARCHIVE.exists():
+        raise SystemExit("VA Comparison Tool or Census ZCTA data is missing. Run init-onet-data.sh.")
+    marker = marker_text()
     if DATABASE.exists() and MARKER.exists() and MARKER.read_text() == marker:
         embed_provider_names()
         print("VA Comparison Tool index is ready.")
@@ -214,25 +221,23 @@ def embed_provider_names() -> None:
     import numpy as np
 
     connection = sqlite3.connect(DATABASE)
-    already = connection.execute(
-        "SELECT COUNT(*) FROM provider_embeddings"
-    ).fetchone()[0] if connection.execute(
-        "SELECT name FROM sqlite_master WHERE name = 'provider_embeddings'"
-    ).fetchone() else 0
-    if already:
-        print(f"Provider name embeddings already present ({already:,}).")
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS provider_embeddings ("
+        "facility_code TEXT PRIMARY KEY, embedding BLOB NOT NULL)"
+    )
+    # Only providers without a vector yet, so a refreshed workbook's newly
+    # approved schools get one without re-embedding the other ~20,000.
+    rows = connection.execute(
+        "SELECT facility_code, institution FROM facilities WHERE approved = 1 "
+        "AND facility_code NOT IN (SELECT facility_code FROM provider_embeddings)"
+    ).fetchall()
+    if not rows:
+        print("Provider name embeddings already present.")
         connection.close()
         return
 
-    print("Embedding provider names (first run downloads a ~67 MB model)...")
+    print(f"Embedding {len(rows):,} provider names (first run downloads a ~67 MB model)...")
     model = TextEmbedding("BAAI/bge-small-en-v1.5")
-    rows = connection.execute(
-        "SELECT facility_code, institution FROM facilities WHERE approved = 1"
-    ).fetchall()
-    connection.execute(
-        "CREATE TABLE provider_embeddings ("
-        "facility_code TEXT PRIMARY KEY, embedding BLOB NOT NULL)"
-    )
     batch: list[tuple[str, list[float]]] = []
     total = 0
     for code, name in rows:
@@ -257,4 +262,12 @@ def embed_provider_names() -> None:
 
 
 if __name__ == "__main__":
-    build_database()
+    import sys
+
+    if sys.argv[1:] == ["--write-marker"]:
+        # After scripts/monthly-refresh.py copies a new workbook into place:
+        # record it as already indexed so the next container start doesn't
+        # rebuild the facilities table from it a second time.
+        MARKER.write_text(marker_text())
+    else:
+        build_database()

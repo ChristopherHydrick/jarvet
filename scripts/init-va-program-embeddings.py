@@ -23,11 +23,16 @@ rows nationwide rather than 388,000.
 """
 from __future__ import annotations
 
+import os
 import sqlite3
 import time
 from pathlib import Path
 
-DATABASE = Path(__file__).resolve().parent.parent / ".cache" / "va-comparison.sqlite"
+# JARVET_VA_DB: a working copy (see scripts/monthly-refresh.py).
+DATABASE = Path(
+    os.environ.get("JARVET_VA_DB")
+    or Path(__file__).resolve().parent.parent / ".cache" / "va-comparison.sqlite"
+)
 BATCH_SIZE = 256
 
 
