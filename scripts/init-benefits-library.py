@@ -49,7 +49,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCES = ROOT / "scripts" / "benefits-sources.json"
-RAW = ROOT / ".cache" / "benefits-library" / "raw"
+DEFAULT_RAW = ROOT / ".cache" / "benefits-library" / "raw"
+RAW = DEFAULT_RAW  # --raw overrides (the monthly refresh keeps its own copy)
 DEFAULT_OUT = ROOT / ".cache" / "benefits-library.new.sqlite"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128 Safari/537.36 Jarvet"
 EMBED_MODEL = "BAAI/bge-small-en-v1.5"
@@ -435,7 +436,11 @@ def main() -> int:
     build_parser = steps.add_parser("build", help="write the passages database")
     build_parser.add_argument("--out", default=str(DEFAULT_OUT))
     build_parser.add_argument("--no-embed", action="store_true", help="skip meaning vectors (keyword search only)")
+    for step_parser in steps.choices.values():
+        step_parser.add_argument("--raw", default=str(DEFAULT_RAW), help="folder for the downloaded sources")
     args = parser.parse_args()
+    global RAW
+    RAW = Path(args.raw)
     return fetch(args) if args.step == "fetch" else build(args)
 
 

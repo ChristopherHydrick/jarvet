@@ -16,7 +16,9 @@ prepare works on a snapshot of the database in <CACHE_BACKUP_DIR>/refresh/
 list, re-fetches every approved school's programs (twice, so the second pass
 retries failures), drops programs of schools that lost approval, rebuilds the
 keyword index, embeds new program titles and re-sorts every program into its
-field (scripts/init-va-program-fields.py). The slow steps run in throwaway
+field (scripts/init-va-program-fields.py), and rebuilds the benefits library
+from freshly downloaded official sources (scripts/init-benefits-library.py,
+its own file). The slow steps run in throwaway
 jarvet-dev containers. It is resumable: re-running continues from the first
 step not yet done; `prepare --restart` starts a new refresh from a new snapshot.
 
@@ -59,7 +61,9 @@ IMAGE = "jarvet-dev"
 REPLACED_TABLES = (
     "facilities", "zcta", "va_programs", "va_programs_crawl_state", "va_program_fields",
 )
-PREPARE_STEPS = ("snapshot", "download", "schools", "programs", "prune", "embeddings", "fields", "finish")
+PREPARE_STEPS = (
+    "snapshot", "download", "schools", "programs", "prune", "embeddings", "fields", "library", "finish",
+)
 
 
 def backup_dir() -> Path:
@@ -81,6 +85,11 @@ WORK_DB = WORK_DIR / "va-comparison.work.sqlite"
 WORK_WORKBOOK = WORK_DIR / "ComparisonToolData.xlsx"
 STATE_FILE = WORK_DIR / "state.json"
 REPORT_FILE = WORK_DIR / "report.txt"
+# The benefits library (scripts/init-benefits-library.py) is its own file,
+# rebuilt here from freshly downloaded sources and swapped in on apply.
+LIVE_LIBRARY = ROOT / ".cache" / "benefits-library.sqlite"
+WORK_LIBRARY = WORK_DIR / "benefits-library.sqlite"
+WORK_LIBRARY_RAW = WORK_DIR / "benefits-raw"
 
 
 def load_state() -> dict:
@@ -230,6 +239,32 @@ def step_fields(state: dict) -> None:
     )
 
 
+def step_library(state: dict) -> None:
+    # Downloads only (no database); a source that fails keeps nothing, so the
+    # report lists failures to look at before applying.
+    subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "init-benefits-library.py"), "fetch",
+         "--raw", str(WORK_LIBRARY_RAW)],
+        check=True,
+    )
+    in_container(
+        ".venv/bin/python scripts/init-benefits-library.py build "
+        "--raw /refresh/benefits-raw --out /refresh/benefits-library.sqlite"
+    )
+
+
+def library_summary(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    connection = read_only(path)
+    try:
+        info = dict(connection.execute("SELECT key, value FROM library_info"))
+        info["titles"] = {url: title for url, title in connection.execute("SELECT url, title FROM documents")}
+    finally:
+        connection.close()
+    return info
+
+
 def step_finish(state: dict) -> None:
     connection = sqlite3.connect(WORK_DB)
     connection.execute("PRAGMA journal_mode=DELETE")
@@ -352,6 +387,21 @@ def report() -> None:
             say(f"  {name}: +{plus} / -{minus}")
     live.close()
     work.close()
+
+    old_library, new_library = library_summary(LIVE_LIBRARY), library_summary(WORK_LIBRARY)
+    say("")
+    say("== Benefits library ==")
+    say(f"Sources: {old_library.get('documents', '0')} -> {new_library.get('documents', '0')}; "
+        f"passages: {old_library.get('passages', '0')} -> {new_library.get('passages', '0')}")
+    old_titles, new_titles = old_library.get("titles", {}), new_library.get("titles", {})
+    for url in sorted(set(new_titles) - set(old_titles)):
+        say(f"  + {new_titles[url]}  {url}")
+    for url in sorted(set(old_titles) - set(new_titles)):
+        say(f"  - {old_titles[url]}  {url}  (missing this month -- page moved or download failed?)")
+    manifest = WORK_LIBRARY_RAW / "manifest.json"
+    if manifest.exists():
+        for failure in json.loads(manifest.read_text(encoding="utf-8"))["failures"]:
+            say(f"  ! {failure['source']}: {failure['error']}")
 
     say("")
     say("== Database checks on the working copy ==")
@@ -477,6 +527,14 @@ def apply(keep_running_check: bool) -> None:
             f"({backup_dir()}\\va-comparison.sqlite -> .cache\\va-comparison.sqlite) before restarting."
         )
 
+    # The library file is replaced whole; the old one goes to the refresh
+    # folder so it can be put back.
+    if WORK_LIBRARY.exists():
+        if LIVE_LIBRARY.exists():
+            shutil.copy2(LIVE_LIBRARY, WORK_DIR / "benefits-library.previous.sqlite")
+        shutil.copy2(WORK_LIBRARY, LIVE_LIBRARY)
+        print("Benefits library replaced (previous copy in the refresh folder).")
+
     # Install the workbook the school list now comes from, and record it as
     # indexed so the next container start doesn't rebuild facilities again.
     shutil.copy2(WORK_WORKBOOK, VA_DATA_DIR / "ComparisonToolData.xlsx")
@@ -498,6 +556,8 @@ def apply(keep_running_check: bool) -> None:
     if keep_running_check:
         print("\n== Database checks on the live database ==")
         subprocess.run([sys.executable, str(ROOT / "scripts" / "check-search-counts.py"), "--db-only"])
+        print("\n== Counselor checks (safety + benefits library) ==")
+        subprocess.run([sys.executable, str(ROOT / "scripts" / "check-counselor.py"), "--no-app"])
 
 
 def main() -> None:
