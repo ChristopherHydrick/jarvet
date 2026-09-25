@@ -425,6 +425,23 @@ def copy_tables(live: sqlite3.Connection) -> None:
     live.execute("DETACH DATABASE work")
 
 
+def wait_for_app(seconds: int = 120) -> bool:
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen("http://localhost:8000/", timeout=3) as response:
+                if response.status == 200:
+                    return True
+        except OSError:
+            pass
+        if not subprocess.run(
+            ["docker", "ps", "-q", "--filter", f"name=^{CONTAINER}$"], capture_output=True, text=True,
+        ).stdout.strip():
+            return False  # the container exited (startup failed)
+        time.sleep(2)
+    return False
+
+
 def apply(keep_running_check: bool) -> None:
     state = load_state()
     if state["done"] != list(PREPARE_STEPS) or not state.get("reported"):
@@ -445,8 +462,14 @@ def apply(keep_running_check: bool) -> None:
     try:
         copy_tables(live)
         result = integrity(live)
+        live.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     finally:
         live.close()
+    # Closing the last connection removes -wal/-shm; left behind by Windows,
+    # they made the app's first open in the container fail ("disk I/O error").
+    leftovers = [p.name for p in LIVE_DB.parent.glob(LIVE_DB.name + "-*")]
+    if leftovers:
+        sys.exit(f"Database side files still present after closing: {leftovers} -- app left stopped.")
     print(f"Integrity: {result}")
     if result != "ok":
         sys.exit(
@@ -467,6 +490,11 @@ def apply(keep_running_check: bool) -> None:
     save_state(state)
     print("Restarting the app...")
     subprocess.run(["docker", "start", CONTAINER], check=True)
+    # Wait for the app to open the database itself before anything else
+    # (the checks) opens it from Windows.
+    if not wait_for_app():
+        sys.exit(f"The app did not come up -- see `docker logs --tail 30 {CONTAINER}`.")
+    print("App is up.")
     if keep_running_check:
         print("\n== Database checks on the live database ==")
         subprocess.run([sys.executable, str(ROOT / "scripts" / "check-search-counts.py"), "--db-only"])
