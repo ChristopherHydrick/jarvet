@@ -178,6 +178,14 @@ and who to contact.
   Directory/library checks run free; chat checks cost credits, run sparingly.
 - Usual database rules: stop app -> backup -> write -> integrity -> restart.
 
+## Critical user journeys
+
+At least 6 journeys that demonstrate Jarvet end to end, each walking the
+veteran through the right questions with guided prompts (one question at a
+time, answer buttons, "why I'm asking"): see **docs/user-journeys.md**
+(draft of 7, requested 2026-09-25). Every phase below should move at least one
+journey forward; each journey gets its own automated check.
+
 ## Phases (checklist -- update as work is done)
 
 1. [~] **Foundation + safety.** Check which VA.gov pages and official PDFs/regulations (eCFR API) download cleanly (try
@@ -198,8 +206,12 @@ and who to contact.
    - [x] Checks: scripts/check-counselor.py (18 safety, 11 library, 1 chat).
    - [x] Sample cited answers shown to the user (GI Bill %/online MHA, SSVF,
      transfer to children).
-   - [ ] User feedback on the sample answers; then add the library to
-     scripts/monthly-refresh.py (fetch + build + swap with the app stopped).
+   - [x] Library added to scripts/monthly-refresh.py (prepare step "library",
+     report section, swap on apply) -- 2026-09-25.
+   - [ ] User feedback on the sample answers.
+1b. [ ] **Guided journeys:** journey definitions + guided-question engine
+   (docs/user-journeys.md), starting with journeys 1, 3, 5 (data exists today),
+   then 2 (with phase 2), 7 (with phase 3), 6.
    - [ ] Build out: more sources as later phases need them (studentaid.gov in
      phase 5, SSVF Program Guide in phase 3, VA Forms API).
 2. [ ] **GI Bill:** rate tables, "what would I get" calculator, estimate on
