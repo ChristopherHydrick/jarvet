@@ -176,6 +176,29 @@
     {
       "question": "what is the best pizza in Chicago",
       "expect_none": true
+    },
+    {
+      "question": "Does SSVF pay for anything related to employment or education?",
+      "top": 5,
+      "url": "section-62.34",
+      "text": "certifications"
+    },
+    {
+      "question": "Does SSVF pay for anything related to employment or education?",
+      "top": 5,
+      "url": "section-62.32",
+      "text": "Educational assistance"
+    },
+    {
+      "question": "Does SSVF pay rent?",
+      "top": 3,
+      "url": "section-62.34",
+      "text": "Rental assistance"
+    },
+    {
+      "question": "What is HUD-VASH?",
+      "top": 3,
+      "text": "voucher"
     }
   ]
 }

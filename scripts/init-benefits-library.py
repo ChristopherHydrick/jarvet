@@ -312,7 +312,10 @@ def fetch(args: argparse.Namespace) -> int:
 
 # ---------------------------------------------------------------- building
 
-def split_passages(text: str) -> list[str]:
+LETTERED_PARAGRAPH = re.compile(r"\((?![ivx]\))[a-z]\)\s")
+
+
+def split_passages(text: str, split_lettered: bool = False) -> list[str]:
     """Split text into ~PASSAGE_WORDS-word passages on line boundaries."""
     passages, current, count = [], [], 0
     for line in text.split("\n"):
@@ -333,6 +336,15 @@ def split_passages(text: str) -> list[str]:
                 pieces.append(" ".join(piece))
         for piece in pieces:
             size = len(piece.split())
+            # A regulation's lettered paragraph -- "(e) General housing
+            # stability assistance." -- starts a new passage, so each rule is
+            # found on its own instead of being buried in the tail of the
+            # previous one (62.34(e), which pays for job certifications,
+            # was lost behind "(4) Moving costs ..."). i, v and x are left
+            # out: they are usually roman-numeral list items of the paragraph.
+            if split_lettered and current and count >= 12 and LETTERED_PARAGRAPH.match(piece):
+                passages.append("\n".join(current))
+                current, count = [], 0
             if current and count + size > PASSAGE_MAX_WORDS:
                 passages.append("\n".join(current))
                 current, count = [], 0
@@ -379,6 +391,11 @@ def build(args: argparse.Namespace) -> int:
     # end with "Contact VA for help ..."); only its first copy is kept, so
     # one question does not return the same text several times.
     seen: set[str] = set()
+    # Regulation sections written for grant administrators (see
+    # "exclude_sections" in benefits-sources.json) are left out.
+    sources = json.loads(SOURCES.read_text(encoding="utf-8"))
+    excluded = [re.compile(item["exclude_sections"]) for item in sources["regulations"]
+                if item.get("exclude_sections")]
     for entry in manifest["documents"]:
         document = json.loads((RAW / f"{entry['id']}.json").read_text(encoding="utf-8"))
         database.execute(
@@ -387,10 +404,13 @@ def build(args: argparse.Namespace) -> int:
              document["publisher"], document["updated"], document["fetched"]),
         )
         for section in document["sections"]:
+            number = section.get("citation", "").split(" CFR ")[-1]
+            if section.get("citation") and any(pattern.match(number) for pattern in excluded):
+                continue
             heading = section["heading"]
             if section.get("subpart"):
                 heading = f"{section['subpart']} > {heading}"
-            for text in split_passages(section["text"]):
+            for text in split_passages(section["text"], split_lettered=document["kind"] == "regulation"):
                 key = re.sub(r"\W+", " ", text.lower()).strip()
                 if len(text.split()) < 12 or key in seen:
                     continue

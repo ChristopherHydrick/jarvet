@@ -59,7 +59,7 @@ def check_library(checks: dict) -> int:
     try:
         from fastembed import TextEmbedding
 
-        from app.benefits import BenefitsLibrary
+        from app.benefits import BenefitsLibrary, fastembed_reranker
     except ImportError:
         # Windows Python has neither; the app container has both.
         result = subprocess.run(
@@ -72,7 +72,8 @@ def check_library(checks: dict) -> int:
         return sum(line.startswith("FAIL") for line in lines) or (result.returncode != 0 and not lines)
     model = TextEmbedding("BAAI/bge-small-en-v1.5")
     library = BenefitsLibrary(ROOT / ".cache" / "benefits-library.sqlite",
-                              embed=lambda text: next(model.embed([text])))
+                              embed=lambda text: next(model.embed([text])),
+                              rerank=fastembed_reranker())
     library.load()
     if not library.available:
         print("FAIL  library: .cache/benefits-library.sqlite missing or empty")

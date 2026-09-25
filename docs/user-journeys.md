@@ -108,20 +108,46 @@ Scholarship, DEA Chapter 35, state waiver) with who decides (DoD for transfer,
 VA for Fry/DEA), how to apply (current form), all cited.
 **Shows off:** benefits library, screening rules, forms, state table (later).
 
-## 7. "I'm about to lose my housing" (new card: Housing help -- social worker)
-**Who:** veteran who is homeless, facing eviction, or behind on rent.
-**Questions (after the 24/7 call center is shown first):**
+## 7. "I need help getting stable" -- SSVF and HUD-VASH (new card: Housing and support services)
+**Who:** veteran (and family) who is homeless, facing eviction, behind on rent or
+bills, or housed but struggling to stay that way. SSVF is **more than housing**:
+the journey covers the whole range of help, not only rent.
+**Questions (the 24/7 homeless call center, 877-424-3838, is shown first if the
+veteran is homeless or about to lose housing):**
 1. Which is closest to your situation? (Homeless now / Eviction notice / Behind
-   on rent or utilities / Couch surfing / Worried about next month)
-2. Where are you staying or living? (city/ZIP) -- *to find the local SSVF provider.*
-3. Who is in your household? (Just me / Me and children / Me and partner /
-   Other) -- *SSVF serves veteran families.*
-4. Would you also like help with work or training? (Yes / Not now)
-**Ends with:** the local SSVF provider(s) with intake phone/email (phase 3
-directory), what they can pay for (rent/utility arrears, deposits -- cited from
-38 CFR 62), HUD-VASH and Grant and Per Diem explained, "what to have ready when
-you call" (DD-214, ID, lease or eviction notice, income), nearest Vet Center.
-**Shows off:** safety rules, SSVF directory, benefits library, caseworker style.
+   on rent or utilities / Staying with others / Housed but need support)
+2. What do you need help with? (pick any: Rent or deposit / Utilities / A job,
+   training or certification / Using my VA education benefits / Legal problem /
+   Child care / Transportation or car repair / Budgeting or credit) -- *so the
+   answer covers everything SSVF and HUD-VASH can do for you.*
+3. Where are you living or staying? (city/ZIP) -- *to find your local SSVF
+   provider and VA medical center.*
+4. Who is in your household? (Just me / Me and children / Me and partner /
+   Other) -- *SSVF serves veteran families; household size affects limits.*
+5. Roughly what is your household income? (optional; buttons by range) -- *SSVF
+   is for very low-income families (about half the local median or less).*
+**Ends with:**
+- **SSVF** (short-term, through a local nonprofit): what it can pay for, cited
+  from 38 CFR 62.33-62.34 -- rent and back rent (up to 6 months a year, 10 in
+  2 years; more for extremely low-income), utilities, security/utility deposits,
+  moving costs, emergency housing; job costs such as uniforms, tools,
+  certifications and licenses (general housing stability assistance, $2,137 per
+  person in 2026 per VA's GHSA update); legal help incl. court fees; child care;
+  transportation incl. up to $1,200 of car repairs; credit counseling; a case
+  manager; and help getting VA benefits incl. **education, vocational and
+  employment services** (62.32). SSVF does not pay tuition -- it helps the
+  veteran get the GI Bill / VR&E that does.
+- **HUD-VASH** (long-term): a HUD housing voucher plus an ongoing VA case
+  manager, for homeless veterans who need intensive support; reached through
+  the VA medical center's homeless program or the call center, not SSVF.
+- Grant and Per Diem (transitional housing) and Community Resource and Referral
+  Centers when relevant.
+- The local SSVF provider(s) with intake phone/email (phase 3 directory),
+  nearest VA medical center homeless program and Vet Center, and "what to have
+  ready when you call" (DD-214, ID, lease or eviction notice, proof of income).
+- If they picked job/training/education: hand-off to journey 4 or 5.
+**Shows off:** safety rules, SSVF directory, benefits library (regulation + GHSA
+update), caseworker style, links to the education journeys.
 
 ---
 

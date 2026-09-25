@@ -31,7 +31,7 @@ TrainingFetcher = Callable[[str, str], Awaitable[list[dict[str, str]] | None]]
 RADIUS_BUFFER_MILES = 5.0
 # search_benefits_info: passages given to the model per question, and how many
 # of their distinct sources become links under the reply.
-BENEFIT_PASSAGES = 8
+BENEFIT_PASSAGES = 16
 BENEFIT_SOURCE_LINKS = 3
 AFSC_SKILL_LEVEL = re.compile(r"\s+(Helper|Apprentice|Journeyman|Craftsman|Superintendent)$")
 # Cap on "Related programs" schools per search: each one costs a live VA API
@@ -302,12 +302,24 @@ TOOL_SCHEMAS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "question": {
-                        "type": "string",
-                        "description": "The veteran's question in plain words, including program names they used (e.g. 'Post-9/11 GI Bill housing allowance for online classes').",
+                    "questions": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "minItems": 1,
+                        "maxItems": 4,
+                        "description": (
+                            "One short question per distinct thing asked, in plain words with the program "
+                            "names used. When asked whether a program pays for something, also ask the "
+                            "broader 'What can <program> pay for?', since official rules list what IS "
+                            "covered (a job certification may be covered as an employment cost even when "
+                            "'education' is not named) -- e.g. for 'Does SSVF pay for education and "
+                            "housing? What is HUD-VASH?': ['What can SSVF pay for?', 'Does SSVF pay for "
+                            "anything related to employment or education?', 'Does SSVF pay rent?', "
+                            "'What is HUD-VASH?']. Each is searched separately so no part is crowded out."
+                        ),
                     },
                 },
-                "required": ["question"],
+                "required": ["questions"],
             },
         },
     },
@@ -358,12 +370,26 @@ class JarvetTools:
         # which the page renders above the cards (app/pathways.py).
         self.pathway: dict[str, Any] | None = None
 
-    def _search_benefits(self, question: str) -> dict[str, Any]:
-        """Library passages for a benefits question (app/benefits.py); the
-        top few distinct sources are attached as links under the reply."""
+    def _search_benefits(self, questions: list[str]) -> dict[str, Any]:
+        """Library passages for one or more benefits questions (app/benefits.py);
+        the top few distinct sources are attached as links under the reply.
+
+        Each question is searched on its own and the results are interleaved
+        (best of each first): searched together, "Does SSVF pay for education?
+        What is HUD-VASH?" returned only HUD-VASH pages and the SSVF rules on
+        education and job costs never reached the model.
+        """
         if self.benefits is None or not self.benefits.available:
             return {"error": "The benefits library is not available right now.", "passages": []}
-        passages = self.benefits.search(question, limit=BENEFIT_PASSAGES)
+        per_question = max(5, BENEFIT_PASSAGES // max(1, len(questions)))
+        found = [self.benefits.search(question, limit=per_question) for question in questions]
+        passages: list[dict[str, Any]] = []
+        seen: set[int] = set()
+        for rank in range(per_question):
+            for results in found:
+                if rank < len(results) and results[rank]["id"] not in seen:
+                    seen.add(results[rank]["id"])
+                    passages.append(results[rank])
         if not passages:
             return {
                 "passages": [],
@@ -1307,7 +1333,10 @@ class JarvetTools:
             }
 
         if name == "search_benefits_info":
-            return self._search_benefits(str(arguments.get("question") or ""))
+            questions = arguments.get("questions") or [arguments.get("question") or ""]
+            if isinstance(questions, str):
+                questions = [questions]
+            return self._search_benefits([str(q) for q in questions if str(q).strip()][:4])
 
         if name == "get_official_resources":
             resources = []
@@ -1466,7 +1495,7 @@ async def run_agent(
 Operating principles:
 - Safety comes before everything else. If the user mentions suicide, self-harm, or wanting to die, however indirectly, begin your reply with the Veterans Crisis Line: dial 988 then press 1, chat live at veteranscrisisline.net, or text 838255 (free, confidential, 24/7; 911 if in immediate danger). If they are homeless or about to lose their housing, begin with the National Call Center for Homeless Veterans, 877-424-3838 (free, 24/7). Then respond to the person with warmth before anything else.
 - Use tools for every factual claim about occupations, programs, providers, geography, VA approval, and benefits. Never invent results.
-- For any question about how a benefit works -- GI Bill chapters, eligibility, months of entitlement, payment and housing allowance rules or rates, Yellow Ribbon, VR&E, benefits for spouses and children, how to apply, or VA homeless and housing programs such as SSVF, HUD-VASH and Grant and Per Diem -- call search_benefits_info first -- once per distinct part of the question (for example one search for "Post-9/11 percentage for 24 months of service" and another for "housing allowance for online classes") -- and answer ONLY from the passages it returns, never from your own memory, since rules and rates change. Put it in plain language (regulations and provider guides are written for staff; say what they mean for the veteran), and name where it comes from in words, with its date (for example "according to VA.gov, updated July 2026"); the source links appear below your reply automatically. When passages disagree, a regulation outranks a web page, and a newer date outranks an older one; say "starting October 1, 2026" when a passage is a future rate. If the passages do not answer the question, say you could not find it in official sources and point to the right contact (VA education: 888-442-4551) instead of guessing. Jarvet cannot see the veteran's VA record, decide eligibility, or file anything: say "you may qualify" and "VA makes the final decision". VA disability claims and VA health care are outside Jarvet's scope: mention that they exist and suggest an accredited representative (a Veterans Service Organization) rather than advising.
+- For any question about how a benefit works -- GI Bill chapters, eligibility, months of entitlement, payment and housing allowance rules or rates, Yellow Ribbon, VR&E, benefits for spouses and children, how to apply, or VA homeless and housing programs such as SSVF, HUD-VASH and Grant and Per Diem -- call search_benefits_info first -- with one short question per distinct part of what was asked (for example "Post-9/11 percentage for 24 months of service" and "housing allowance for online classes") -- and answer ONLY from the passages it returns, never from your own memory, since rules and rates change. Put it in plain language (regulations and provider guides are written for staff; say what they mean for the veteran), and name where it comes from in words, with its date (for example "according to VA.gov, updated July 2026"); the source links appear below your reply automatically. When asked whether a program pays for or helps with something, cover every related kind of help the passages show, including indirect help -- for example SSVF does not pay tuition, but its providers must help veterans obtain VA education and employment benefits, and it can pay job costs such as certifications, licenses, tools and uniforms -- rather than a flat "no". When passages disagree, a regulation outranks a web page, and a newer date outranks an older one; say "starting October 1, 2026" when a passage is a future rate. If the passages do not answer the question, say you could not find it in official sources and point to the right contact (VA education: 888-442-4551) instead of guessing. Jarvet cannot see the veteran's VA record, decide eligibility, or file anything: say "you may qualify" and "VA makes the final decision". VA disability claims and VA health care are outside Jarvet's scope: mention that they exist and suggest an accredited representative (a Veterans Service Organization) rather than advising.
 - When a tool result includes an exact total count (total_facilities, total_programs), open with that exact number ("Found 25 VA-approved diver programs") instead of a vague quantifier like several, many, or multiple. The count is precisely known from structured data; state it precisely.
 - Preserve the current selected occupation unless the user clearly changes career goals. If they do, search and then call get_occupation for the best supported match.
 - When search_occupations returns several plausible matches, do not silently pick one. Present the top matches with one-line distinctions and let the user choose, unless one is an obviously exact match for the user's words. A user who said "fix cars" means automotive work; if the best match is not automotive, say why and offer the automotive match.

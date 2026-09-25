@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from app import safety
 from app.agent import arrange_listings, run_agent
-from app.benefits import BenefitsLibrary
+from app.benefits import BenefitsLibrary, fastembed_reranker
 from app.cache import ResponseCache
 from app.ipeds import IpedsIndex
 from app.onet import OnetGraph
@@ -30,6 +30,7 @@ ipeds_index = IpedsIndex(ROOT / ".cache" / "ipeds.sqlite")
 # file (scripts/init-benefits-library.py), using program search's embedder.
 benefits_library = BenefitsLibrary(
     ROOT / ".cache" / "benefits-library.sqlite", embed=va_index._query_embedding,
+    rerank=fastembed_reranker(),
 )
 response_cache = ResponseCache(
     ROOT / ".cache" / "chat-responses.sqlite",

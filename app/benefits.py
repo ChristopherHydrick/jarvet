@@ -9,6 +9,10 @@ instead of relying on the model's memory (docs/counselor-plan.md).
 Search combines a keyword search (FTS5) with a meaning search (the same
 fastembed model as program search) by reciprocal rank fusion, so both exact
 terms ("Chapter 33", "SSVF") and plain questions ("help paying rent") work.
+A question naming a program (SSVF, HUD-VASH, VR&E, ...) also draws candidates
+from that program's own pages and rules, and when a re-ranking model is
+available (a small cross-encoder that reads question and passage together)
+it puts the candidates in their final order.
 The file is opened read-only; a rebuild is installed with the app stopped.
 """
 from __future__ import annotations
@@ -33,6 +37,30 @@ MIN_SIMILARITY = 0.6
 KEYWORD_ONLY_KEEP = 3
 # How many of the best results also bring the passage that follows them.
 CONTINUE_TOP = 4
+# Candidates the re-ranker reads per question (about 1-3 s per 40 on this
+# machine's CPU).
+RERANK_POOL = 40
+# Candidates drawn from the named program's own passages, on top of the
+# library-wide ones. Needed because words like "education" or "SSVF" appear
+# in thousands of passages: "Does SSVF help with education?" otherwise ranked
+# the SSVF rule that says grantees must help veterans get VA education
+# benefits (38 CFR 62.32) 55th by meaning and 252nd by keyword.
+TOPIC_CANDIDATES = 40
+# Program named in a question -> test for passages that are about it.
+TOPICS: list[tuple[re.Pattern[str], Callable[[dict[str, Any]], bool]]] = [
+    (re.compile(r"\bssvf\b|supportive services for veteran families", re.I),
+     lambda row: "supportive-services-for-veteran-families" in row["url"] or "SSVF" in row["title"]
+     or row["citation"].startswith("38 CFR 62.")),
+    (re.compile(r"\bhud[\s-]?vash\b", re.I), lambda row: "hud-vash" in row["url"].lower()),
+    (re.compile(r"\bgrant (?:and|&) per diem\b|\bgpd\b", re.I), lambda row: "grant-per-diem" in row["url"]),
+    (re.compile(r"\bvr\s*&\s*e\b|\bvoc(?:ational)?\s+rehab|\bveteran readiness\b|\bchapter\s*31\b", re.I),
+     lambda row: "vocational-rehabilitation" in row["url"] or "Vocational Rehabilitation and Employment" in row["heading"]),
+    (re.compile(r"\bdea\b|\bchapter\s*35\b|\bdependents'? educational", re.I),
+     lambda row: "dependents-education-assistance" in row["url"] or "chapter-35" in row["url"]
+     or "Dependents' Educational Assistance" in row["heading"]),
+    (re.compile(r"\bfry\b", re.I), lambda row: "fry-scholarship" in row["url"]),
+    (re.compile(r"\byellow ribbon\b", re.I), lambda row: "yellow-ribbon" in row["url"] or "Yellow Ribbon" in row["heading"]),
+]
 STOPWORDS = {
     "a", "an", "and", "are", "can", "do", "does", "for", "how", "i", "if", "in", "is", "it", "me",
     "my", "of", "on", "or", "the", "to", "what", "when", "where", "which", "who", "why", "with",
@@ -41,9 +69,14 @@ STOPWORDS = {
 
 
 class BenefitsLibrary:
-    def __init__(self, path: Path, embed: Callable[[str], Any] | None = None) -> None:
+    def __init__(
+        self, path: Path, embed: Callable[[str], Any] | None = None,
+        rerank: Callable[[str, list[str]], list[float]] | None = None,
+    ) -> None:
         self.path = path
         self.embed = embed
+        self.rerank = rerank
+        self._topic_ids: list[set[int]] = []
         self.available = False
         self.info: dict[str, str] = {}
         self._rows: dict[int, dict[str, Any]] = {}
@@ -75,13 +108,16 @@ class BenefitsLibrary:
             matrix = np.vstack([np.frombuffer(blob, dtype=np.float32) for _, blob in vectors])
             norms = np.linalg.norm(matrix, axis=1, keepdims=True)
             self._matrix = matrix / np.where(norms == 0, 1, norms)
+        self._topic_ids = [
+            {passage_id for passage_id, row in self._rows.items() if about(row)} for _, about in TOPICS
+        ]
         self.available = bool(self._rows)
 
     @property
     def passage_count(self) -> int:
         return len(self._rows)
 
-    def _keyword_ranks(self, query: str) -> list[int]:
+    def _keyword_ranks(self, query: str, topic: set[int] | None = None) -> list[int]:
         words = [w for w in re.findall(r"[a-z0-9]+(?:/[0-9]+)?", query.lower()) if w not in STOPWORDS]
         if not words:
             return []
@@ -89,16 +125,22 @@ class BenefitsLibrary:
         match = " OR ".join('"' + w.replace('"', "") + '"' for w in dict.fromkeys(words))
         database = self._connect()
         try:
-            return [row[0] for row in database.execute(
+            ranked = [row[0] for row in database.execute(
                 "SELECT rowid FROM passages_fts WHERE passages_fts MATCH ? "
-                "ORDER BY bm25(passages_fts, 2.0, 3.0, 1.0) LIMIT ?", (match, CANDIDATES),
+                "ORDER BY bm25(passages_fts, 2.0, 3.0, 1.0) LIMIT ?",
+                (match, 1000 if topic else CANDIDATES),
             )]
+            if topic:
+                ranked = ranked[:CANDIDATES] + [pid for pid in ranked if pid in topic][:TOPIC_CANDIDATES]
+            return list(dict.fromkeys(ranked))
         except sqlite3.OperationalError:
             return []
         finally:
             database.close()
 
-    def _meaning_ranks(self, query: str) -> tuple[list[int], dict[int, float]]:
+    def _meaning_ranks(
+        self, query: str, topic: set[int] | None = None,
+    ) -> tuple[list[int], dict[int, float]]:
         if self.embed is None or not len(self._ids):
             return [], {}
         vector = self.embed(query)
@@ -107,16 +149,24 @@ class BenefitsLibrary:
         vector = np.asarray(vector, dtype=np.float32)
         vector = vector / (np.linalg.norm(vector) or 1)
         scores = self._matrix @ vector
-        top = np.argsort(-scores)[:CANDIDATES]
-        return [int(self._ids[i]) for i in top], {int(self._ids[i]): float(scores[i]) for i in top}
+        order = np.argsort(-scores)
+        top = [int(self._ids[i]) for i in order[:CANDIDATES]]
+        if topic:
+            top += [int(self._ids[i]) for i in order if int(self._ids[i]) in topic][:TOPIC_CANDIDATES]
+        similarity = {int(self._ids[i]): float(scores[i]) for i in range(len(self._ids))}
+        return list(dict.fromkeys(top)), similarity
 
     def search(self, query: str, limit: int = 6, kinds: list[str] | None = None) -> list[dict[str, Any]]:
         """Best passages for a question, each with its source and date."""
         if not self.available or not query.strip():
             return []
         fused: dict[int, float] = {}
-        meaning_ranks, similarity = self._meaning_ranks(query)
-        keyword_ranks = self._keyword_ranks(query)
+        topic: set[int] = set()
+        for (named, _), ids in zip(TOPICS, self._topic_ids):
+            if named.search(query):
+                topic |= ids
+        meaning_ranks, similarity = self._meaning_ranks(query, topic)
+        keyword_ranks = self._keyword_ranks(query, topic)
         for ranks in (keyword_ranks, meaning_ranks):
             for rank, passage_id in enumerate(ranks):
                 fused[passage_id] = fused.get(passage_id, 0.0) + 1.0 / (FUSION_K + rank)
@@ -132,12 +182,26 @@ class BenefitsLibrary:
             }
             if not any(similarity.get(passage_id, 0.0) >= MIN_SIMILARITY for passage_id in fused):
                 return []  # nothing in the library is about this question
+        ordered = sorted(
+            fused,
+            key=lambda pid: -fused[pid] * KIND_WEIGHT.get(self._rows.get(pid, {}).get("kind"), 1.0)
+            * (1.5 if pid in topic else 1.0),
+        )
+        if self.rerank is not None and ordered:
+            pool = [pid for pid in ordered if pid in self._rows][:RERANK_POOL]
+            try:
+                scores = self.rerank(query, [
+                    f"{self._rows[pid]['title']}. {self._rows[pid]['heading']}. {self._rows[pid]['text']}"
+                    for pid in pool
+                ])
+            except Exception:  # the re-ranker is an improvement, never a requirement
+                scores = None
+            if scores is not None:
+                reranked = dict(zip(pool, scores))
+                ordered = sorted(pool, key=lambda pid: -reranked[pid]) + ordered[len(pool):]
         results = []
         used: set[int] = set()
-        for passage_id, score in sorted(
-            fused.items(),
-            key=lambda item: -item[1] * KIND_WEIGHT.get(self._rows.get(item[0], {}).get("kind"), 1.0),
-        ):
+        for passage_id in ordered:
             row = self._rows.get(passage_id)
             if row is None or passage_id in used or (kinds and row["kind"] not in kinds):
                 continue
@@ -169,3 +233,21 @@ def source_label(row: dict[str, Any]) -> str:
     if row.get("updated"):
         label += f", updated {row['updated']}"
     return label
+
+
+RERANK_MODEL = "Xenova/ms-marco-MiniLM-L-12-v2"  # ~120 MB, downloaded once by fastembed; L-6 missed SSVF job-cost rules
+
+
+def fastembed_reranker() -> Callable[[str, list[str]], list[float]]:
+    """A re-ranking function for BenefitsLibrary, loading the model on first
+    use; if it cannot load (no download possible), search falls back to its
+    fused keyword + meaning order."""
+    model: list[Any] = []
+
+    def rerank(query: str, documents: list[str]) -> list[float]:
+        if not model:
+            from fastembed.rerank.cross_encoder import TextCrossEncoder
+            model.append(TextCrossEncoder(RERANK_MODEL))
+        return [float(score) for score in model[0].rerank(query, documents)]
+
+    return rerank

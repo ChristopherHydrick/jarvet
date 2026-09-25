@@ -1,6 +1,9 @@
 {
   "_about": "Sources for the benefits library (scripts/init-benefits-library.py, docs/counselor-plan.md). VA.gov pages come from its sitemap by prefix; the rest are listed. Checked 2026-09-25.",
-  "vagov_sitemaps": ["https://www.va.gov/sitemap-nb.xml", "https://www.va.gov/sitemap-cb.xml"],
+  "vagov_sitemaps": [
+    "https://www.va.gov/sitemap-nb.xml",
+    "https://www.va.gov/sitemap-cb.xml"
+  ],
   "vagov_prefixes": [
     "https://www.va.gov/education/",
     "https://www.va.gov/careers-employment/",
@@ -8,9 +11,22 @@
     "https://www.va.gov/housing-assistance/home-loans/trouble-making-payments/"
   ],
   "vagov_exclude": [
-    "past-rates", "-esp/", "/apply-", "form-", "/your-", "status", "/gi-bill-comparison-tool",
-    "/check-remaining", "/download-", "/verify-school-enrollment/", "/how-to-apply/application/",
-    "/education/apply-for-education-benefits/application", "/request-", "/submit-", "/review-", "/yellow-ribbon-participating-schools/"
+    "past-rates",
+    "-esp/",
+    "/apply-",
+    "form-",
+    "/your-",
+    "status",
+    "/gi-bill-comparison-tool",
+    "/check-remaining",
+    "/download-",
+    "/verify-school-enrollment/",
+    "/how-to-apply/application/",
+    "/education/apply-for-education-benefits/application",
+    "/request-",
+    "/submit-",
+    "/review-",
+    "/yellow-ribbon-participating-schools/"
   ],
   "pages": [
     "https://department.va.gov/homeless/",
@@ -48,13 +64,29 @@
     "https://department.va.gov/homeless/do-homeless-veterans-have-access-to-va-hospitals/"
   ],
   "regulations": [
-    {"title": 38, "part": 21, "name": "38 CFR Part 21 -- VA education and Veteran Readiness and Employment rules"},
-    {"title": 38, "part": 62, "name": "38 CFR Part 62 -- Supportive Services for Veteran Families (SSVF) rules"}
+    {
+      "title": 38,
+      "part": 21,
+      "name": "38 CFR Part 21 -- VA education and Veteran Readiness and Employment rules"
+    },
+    {
+      "title": 38,
+      "part": 62,
+      "name": "38 CFR Part 62 -- Supportive Services for Veteran Families (SSVF) rules",
+      "exclude_sections": "^62\\.(?:2\\d|[4-8]\\d)$",
+      "_exclude_why": "Grant applications, scoring, payments, monitoring, reporting and closeout are rules for grant administrators; they crowded veteran-facing rules (62.30-62.38) out of search results."
+    }
   ],
   "pdfs": [
-    {"url": "https://department.va.gov/homeless/wp-content/uploads/sites/72/2026/09/SSVF_Annual_GHSA_Update_2026.pdf",
-     "title": "SSVF Annual GHSA Update 2026", "publisher": "VA Homeless Programs Office"},
-    {"url": "https://department.va.gov/homeless/wp-content/uploads/sites/72/2026/04/SSVF_Annual_Report_FY2024.pdf",
-     "title": "SSVF Annual Report FY2024", "publisher": "VA Homeless Programs Office"}
+    {
+      "url": "https://department.va.gov/homeless/wp-content/uploads/sites/72/2026/09/SSVF_Annual_GHSA_Update_2026.pdf",
+      "title": "SSVF Annual GHSA Update 2026",
+      "publisher": "VA Homeless Programs Office"
+    },
+    {
+      "url": "https://department.va.gov/homeless/wp-content/uploads/sites/72/2026/04/SSVF_Annual_Report_FY2024.pdf",
+      "title": "SSVF Annual Report FY2024",
+      "publisher": "VA Homeless Programs Office"
+    }
   ]
 }
