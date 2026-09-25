@@ -3,7 +3,9 @@
 Goal: Jarvet acts as a **VA education-benefits counselor, career counselor,
 education counselor and social worker** for veterans.
 
-**Scope for now:** education, careers, housing and support services.
+**Scope for now:** education, careers, housing and support services -- including
+routes for veterans the VA does not cover (state vocational rehabilitation,
+federal and state aid).
 **Out of scope for now:** VA disability claims/compensation and VA health care
 (Jarvet may mention they exist and point to an accredited representative, but
 does not advise on them).
@@ -209,6 +211,27 @@ journey forward; each journey gets its own automated check.
    - [x] Library added to scripts/monthly-refresh.py (prepare step "library",
      report section, swap on apply) -- 2026-09-25.
    - [ ] User feedback on the sample answers.
+1a. [ ] **Routes without VA benefits (critical, user 2026-09-25).** Veterans with
+   no GI Bill (never qualified, used up, expired, other-than-honorable
+   discharge) or no VA rating for VR&E must still get a path to training:
+   - State vocational rehabilitation (VR): 78 agencies (RSA list,
+     rsa.ed.gov/about/states) -- directory by state (general + blind agencies),
+     plus eligibility rules from 34 CFR 361.42 (any physical or mental
+     impairment that is a substantial impediment to employment, decided by the
+     state; SSI/SSDI recipients presumed eligible; no VA rating or discharge
+     requirement) and each agency's own pages, starting with California DOR.
+     Plain-language examples: mental health conditions, substance use disorders
+     in recovery, chronic illnesses -- always "the state decides".
+   - Federal aid: FAFSA / Pell Grant (studentaid.gov is a JavaScript site --
+     use its API/handbook or fsapartners.ed.gov), WIOA training money through
+     American Job Centers (veterans get priority of service; DVOP specialists
+     for veterans with significant barriers), DOL HVRP for homeless veterans.
+   - State aid: community college fee waivers (California College Promise
+     Grant first), state veteran programs (phase 6 table).
+   - Free VA help that needs no GI Bill: Chapter 36 career counseling; SSVF job
+     costs (certifications, tools) for SSVF-eligible families.
+   - "Other ways to pay for training" screening + journey 8, and journey 1
+     branches to it; prompt rule: never stop at "you don't qualify".
 1b. [ ] **Guided journeys:** journey definitions + guided-question engine
    (docs/user-journeys.md), starting with journeys 1, 3, 5 (data exists today),
    then 2 (with phase 2), 7 (with phase 3), 6.

@@ -1,6 +1,6 @@
 # Jarvet critical user journeys (draft 2026-09-25, for the user's review)
 
-Seven journeys that show what Jarvet can do. Each one starts from a card on
+Eight journeys that show what Jarvet can do. Each one starts from a card on
 the landing page (or from the veteran's own words), asks only the questions it
 needs -- one at a time, in plain language, with tap-to-answer buttons and a
 short "why I'm asking" -- and ends with something the veteran can act on.
@@ -37,6 +37,9 @@ Common rules for every journey:
 **Ends with:** a short "what you likely have" list (cited: Post-9/11 at N%,
 VR&E worth a look, etc.), 3-5 matching programs nearby, and 3 next steps
 (apply for benefits, compare schools, talk to a school certifying official).
+If the answers show no GI Bill (no qualifying service, other-than-honorable
+discharge, used up or expired) and no VA rating, it continues straight into
+journey 8 instead of stopping at "you don't qualify".
 **Shows off:** benefits library, screening rules, program search, location.
 
 ## 2. "What would the GI Bill pay at this school?" (card BRAVO: Get paid to go to school)
@@ -151,9 +154,41 @@ update), caseworker style, links to the education journeys.
 
 ---
 
-## Candidate 8 (later): "I used up my GI Bill / it expired"
-Disability rating -> VR&E screening; months left; FAFSA/Pell (phase 5);
-state programs (phase 6); scholarships.
+## 8. "The VA won't cover me -- how else can I pay for training?" (new card: Other ways to pay)
+**Who:** veteran with no GI Bill (never qualified, used it up, it expired, or
+an other-than-honorable discharge) and no VA disability rating for VR&E --
+or anyone who wants to add non-VA money on top of VA benefits.
+**Questions:**
+1. Which state do you live in? -- *each state runs its own vocational
+   rehabilitation agency and aid programs.*
+2. Do you have any health condition that makes working or keeping a job harder?
+   It does not need a VA rating. (Yes / No / Not sure / Prefer not to say) --
+   *examples in plain words: a mental health condition, a substance use disorder
+   or recovery, chronic pain or illness, a learning disability, severe
+   allergies or chemical sensitivities; the state decides, not VA.*
+3. Do you get Social Security disability (SSI or SSDI)? (Yes / No / Not sure)
+   -- *if yes, the state program must presume you're eligible.*
+4. Roughly what is your household income? (optional, ranges) -- *for Pell
+   Grant and WIOA training money.*
+5. What do you want to train for? (typed, or Healthcare / Trades / Tech /
+   Business / Not sure)
+**Ends with:**
+- **State vocational rehabilitation** (if yes/not sure to 2 or yes to 3): the
+  state agency's name, how to apply and phone (e.g. California Department of
+  Rehabilitation), what it can pay for (training, tuition, books, tools,
+  job placement), and that eligibility is the state's decision -- cited from
+  34 CFR 361.42 and the agency's own pages.
+- **Federal aid:** FAFSA / Pell Grant (free money that doesn't need to be paid
+  back, for lower-income students), WIOA training funds through the local
+  American Job Center, where veterans get priority of service.
+- **State aid:** e.g. California College Promise Grant (community college fees
+  waived for eligible low-income residents); state veteran programs (phase 6).
+- **Still free from VA:** Chapter 36 career counseling; for SSVF-eligible
+  families, SSVF can pay job certifications and tools.
+- **Earn while you learn:** apprenticeships (paid, no benefits needed) -- hands
+  off to journey 4; matching schools -- hands off to journey 5.
+**Shows off:** state VR directory, federal/state aid in the library, screening
+without VA benefits, links to the school and training journeys.
 
 ## How each journey is checked
 For every journey, a saved script of answers runs through the app: the free
