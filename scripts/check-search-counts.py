@@ -27,6 +27,7 @@ import argparse
 import asyncio
 import collections
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -66,7 +67,9 @@ def read_only(path: Path) -> sqlite3.Connection:
 def build_tools() -> tuple[VaComparison, JarvetTools]:
     # Mirrors each index's load() but with read-only connections: load()
     # itself runs a CREATE TABLE IF NOT EXISTS on the VA database.
-    va = VaComparison(CACHE / "va-comparison.sqlite")
+    # JARVET_CHECK_DB points the checks at a trial copy (e.g. before writing
+    # recomputed program fields to the real database).
+    va = VaComparison(Path(os.environ.get("JARVET_CHECK_DB") or CACHE / "va-comparison.sqlite"))
     va.connection = read_only(va.path)
     va.cities = [
         (row[0], row[1], _normalized(row[0]))

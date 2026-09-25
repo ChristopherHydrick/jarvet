@@ -42,13 +42,34 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DATABASE = ROOT / ".cache" / "va-comparison.sqlite"
 SCHOOL_MARGIN = 0.08
+# For a school matched to IPEDS only by a looser name (a branch campus to its
+# main campus, a chain's sibling campus), its field list is a weaker guide:
+# at 0.08 it pulled "BA ART" to Architecture and "AA GENERAL BUSINESS" to
+# Agribusiness, so it has to be nearly as good as the nationwide best.
+LOOSE_SCHOOL_MARGIN = 0.04
 BATCH_SIZE = 512
 
 DEGREE_PREFIX = re.compile(
     r"^(AAS|AA-T|AS-T|AAT|AST|AA|AS|BA|BS|BFA|BSN|BBA|MA|MS|MBA|MED|MFA|PHD|EDD|DNP|GC|"
-    r"CERT|COA|COC|CA|CP|AOS|AGS|BAS|BPS|MPA|MPH|MSW|DPT|OTD|PHARMD|JD|MD|DDS)\b[\s\-]*",
+    r"CERT|COA|COC|CA|CP|AOS|AGS|BAS|BPS|MPA|MPH|MSW|DPT|OTD|PHARMD|JD|MD|DDS|"
+    r"BSBA|BSED|MSED|BSE|MSE|BSC|MSC|AAB|AFA|DIPL|DIP|TC|TD|GRAD CERT)\b[\s\-]*",
     re.I,
 )
+# VA's shorthand, spelled out before embedding -- the model reads "mgmt" or
+# "hlth" as noise. Only unambiguous ones: ENG (English or engineering?), SEC
+# (security or secondary?) and COMP (computer or composition?) stay as is.
+ABBREVIATIONS = {
+    "admin": "administration", "adm": "administration", "mgmt": "management",
+    "mgt": "management", "edu": "education", "educ": "education", "sci": "science",
+    "info": "information", "sys": "systems", "spec": "specialist", "adv": "advanced",
+    "tech": "technology", "techn": "technician", "tec": "technology", "hlth": "health",
+    "maint": "maintenance", "psych": "psychology", "asst": "assistant",
+    "ldrshp": "leadership", "dev": "development", "prof": "professional",
+    "elem": "elementary", "lic": "licensed", "lvl": "level", "org": "organizational",
+    "lang": "language", "stud": "studies", "conc": "concentration", "engr": "engineering",
+    "comm": "communication", "bus": "business", "acct": "accounting", "mfg": "manufacturing",
+    "const": "construction", "mech": "mechanical", "elec": "electrical",
+}
 NO_FIELD = re.compile(r"\bhigh\s*school\b|\bG\.?E\.?D\b|\bHiSET\b|\bHSE\b", re.I)
 # CIP's homeland-security fields (43.04xx) have titles like "Cybersecurity
 # Defense Strategy/Policy" that out-score the IT security field on a plain
@@ -65,8 +86,62 @@ NOT_IT_SECURITY_TITLE = re.compile(r"crim|forensic|policy|law\b|homeland|terror|
 SECURITY_POLICY_CIPS = {"43.0401", "43.0403", "43.0404", "43.0499"}
 
 
+# Titles whose field is plain from one keyword, where the embedding match
+# (or the school's own IPEDS list) often chose a neighbor: "PARALEGAL STUDIES"
+# -> Legal Studies, Palo Verde's "AS NURSING - RN" -> Nursing Assistant, CDL
+# courses -> Transportation Law or Animal Training. First match wins, so the
+# nursing bridges ("LPN TO ASN", "PARAMEDIC TO ADN") land on registered
+# nursing before the LPN or EMT rules see them. Each pattern was checked
+# against samples of the rows it moves; exclusions keep teaching, management
+# and advanced-practice programs (nurse practitioner, CRNA...) where they were.
+NOT_CLINICAL = (
+    r"ADMIN|MANAGEMENT|MGMT|MGT|EDUCAT|TEACH|LEADERSHIP|LDRSHP|INFORMATICS|INSTRUCTOR|BUSINESS"
+)
+ADVANCED_NURSING = r"|PRACTITIONER|\bFNP|\bNP\b|DNP|MSN|MASTER|DOCTOR|ANESTH|MIDWI|\bCRNA"
+KEYWORD_RULES = [
+    (cip, re.compile(pattern), re.compile(exclude))
+    for cip, pattern, exclude in [
+        ("51.3801",
+         r"\b(LPN|LVN|PARAMEDIC)\W+(TO\W+)?(RN|ADN|ASN|AAS|BSN)\b|NURSING\W+(CAREER\W+)?MOB"
+         r"|NURSING.*TRANSITION",
+         NOT_CLINICAL + ADVANCED_NURSING),
+        ("51.3801",
+         r"\bRN\b|\bADN\b|\bASN\b|\bBSN\b|REGISTERED NURS|PROFESSIONAL NURSING"
+         r"|ASSOCIATE DEGREE NURSING|\bNURSING GENERIC|^(AAS|AS|AAS-T|AS-T)\W+NURSING\b",
+         NOT_CLINICAL + ADVANCED_NURSING
+         + r"|SPECIALIST|CLINICAL NURSE|VOCATIONAL|PRACTICAL|\bLVN\b|\bLPN\b|ASSISTANT|AIDE"),
+        ("51.3901", r"VOCATIONAL NURS|PRACTICAL NURS|\bLVN\b|\bLPN\b", NOT_CLINICAL),
+        ("51.3902", r"NURS\w* ASSIST|NURSE AIDE|NURSING AIDE|\bCNA\b", NOT_CLINICAL + r"|RESTORATIVE"),
+        ("51.0904", r"\bEMT\b|EMERGENCY MEDICAL TECH|PARAMEDIC",
+         NOT_CLINICAL + r"|FIRE|DISPATCH|NURS"),
+        ("22.0302", r"PARALEGAL|LEGAL ASSIST", r"NURS"),
+        ("51.0801", r"MEDICAL ASSIST", NOT_CLINICAL + r"|RADIO|X.?RAY|CODING|BILLING|OFFICE"),
+        ("51.0805", r"PHARMACY TECH", NOT_CLINICAL),
+        ("51.0909", r"SURGICAL TECH", NOT_CLINICAL),
+        ("51.1009", r"PHLEBOTOM", NOT_CLINICAL + r"|EKG|ECG|MEDICAL ASSIST"),
+        ("51.0601", r"DENTAL ASSIST", NOT_CLINICAL + r"|HYGIEN"),
+        ("51.0602", r"DENTAL HYGIEN", NOT_CLINICAL),
+        ("51.0908", r"RESPIRATORY (THERAP|CARE)", NOT_CLINICAL),
+        ("48.0508", r"WELD", r"ENGINEER|INSPECT"),
+        ("47.0201", r"\bHVAC|HEATING.{0,20}AIR COND|REFRIGERATION", r"ENGINEER"),
+        ("47.0605", r"DIESEL", r"ENGINEER"),
+        ("46.0503", r"PLUMB", r"ENGINEER"),
+        ("49.0205", r"\bCDL\b|TRUCK DRIV|TRACTOR.?TRAILER|COMMERCIAL DRIV", r"INSTRUCTOR"),
+        ("12.0402", r"BARBER", r"INSTRUCTOR|TEACH|EDUCATOR"),
+        ("12.0401", r"COSMETOLOG", r"INSTRUCTOR|TEACH|EDUCATOR|MGMT|MANAGEMENT|NAIL|ESTHET"),
+        ("51.3501", r"MASSAGE", r"INSTRUCTOR"),
+    ]
+]
+
+
 def adjusted(record: dict) -> dict:
     """Rule-based corrections applied on top of the embedding match."""
+    if record.get("cip") is None:
+        return record
+    title = record["description"].upper()
+    for cip, pattern, exclude in KEYWORD_RULES:
+        if pattern.search(title) and not exclude.search(title):
+            return {**record, "cip": cip, "method": "rule", "score": 1.0}
     if (
         record.get("cip") in SECURITY_POLICY_CIPS
         and IT_SECURITY_TITLE.search(record["description"])
@@ -81,12 +156,32 @@ def clean_title(title: str) -> str:
     previous = None
     while previous != text:
         previous, text = text, DEGREE_PREFIX.sub("", text)
-    return (text or previous).lower()
+    return re.sub(
+        r"[a-z]+", lambda word: ABBREVIATIONS.get(word.group(), word.group()),
+        (text or previous).lower(),
+    ).replace("comp science", "computer science")
 
 
 def normalized_name(name: str) -> str:
     words = " ".join(re.findall(r"[a-z0-9]+", name.lower().replace("&", " and ")))
     return words.replace("saint ", "st ")
+
+
+def name_variants(name: str, city: str = "") -> set[str]:
+    """Other ways the same school is written: without "the", without
+    "main campus", the part before a dash, "X-Y" as "X at Y", and without a
+    trailing city. Generic leftovers ("campus", short words) are dropped."""
+    base = normalized_name(name)
+    variants = {base, re.sub(r"^the ", "", base), base.replace(" at ", " ")}
+    parts = re.split(r"\s*-\s*", name.strip())
+    if len(parts) > 1:
+        head = normalized_name(parts[0])
+        variants |= {head, re.sub(r"^the ", "", head), normalized_name(" at ".join(parts))}
+    variants.add(re.sub(r"\s+", " ", re.sub(r"\b(main campus|main|campus)\b", "", base)).strip())
+    city_name = normalized_name(city)
+    if city_name and base.endswith(" " + city_name):
+        variants.add(base[: -len(city_name) - 1])
+    return {variant for variant in variants if len(variant) > 6 and variant not in {"the", "campus"}}
 
 
 def read_only(path: Path) -> sqlite3.Connection:
@@ -102,27 +197,68 @@ def compute(source: Path, ipeds_path: Path, out: Path) -> None:
     va = read_only(source)
     ipeds = read_only(ipeds_path)
 
-    ipeds_by_name: dict[tuple[str, str], list[tuple[str, str]]] = collections.defaultdict(list)
-    for unitid, name, state, zip_code in ipeds.execute(
-        "SELECT unitid, name, state, zip FROM institutions"
+    ipeds_by_name: dict[tuple[str, str], list[str]] = collections.defaultdict(list)
+    ipeds_by_variant: dict[tuple[str, str], set[str]] = collections.defaultdict(set)
+    ipeds_names_in_state: dict[str, list[tuple[str, str]]] = collections.defaultdict(list)
+    ipeds_place: dict[str, tuple[str, str]] = {}
+    for unitid, name, state, zip_code, city in ipeds.execute(
+        "SELECT unitid, name, state, zip, city FROM institutions"
     ):
-        ipeds_by_name[(normalized_name(name), state)].append((unitid, (zip_code or "")[:5]))
+        ipeds_by_name[(normalized_name(name), state)].append(unitid)
+        for variant in name_variants(name, city or ""):
+            ipeds_by_variant[(variant, state)].add(unitid)
+        ipeds_names_in_state[state].append((normalized_name(name), unitid))
+        ipeds_place[unitid] = ((zip_code or "")[:5], (city or "").upper())
     school_cips: dict[str, list[str]] = collections.defaultdict(list)
     for unitid, cip in ipeds.execute("SELECT DISTINCT unitid, cip FROM programs"):
         school_cips[unitid].append(cip)
 
-    def ipeds_unitid(name: str, state: str, zip_code: str | None) -> str | None:
-        candidates = ipeds_by_name.get((normalized_name(name), state))
-        if not candidates:
-            return None
-        same_zip = [unitid for unitid, zz in candidates if zz == (zip_code or "")[:5]]
-        return same_zip[0] if same_zip else candidates[0][0]
+    def one_school(candidates, zip_code: str | None, city: str | None) -> str | None:
+        """The candidate at the same ZIP, else the same city, else the only one."""
+        candidates = sorted(set(candidates))
+        if len(candidates) == 1:
+            return candidates[0]
+        for position, value in ((0, (zip_code or "")[:5]), (1, (city or "").upper())):
+            same = [unitid for unitid in candidates if ipeds_place[unitid][position] == value]
+            if len(same) == 1:
+                return same[0]
+            if same:
+                candidates = same
+        return None
 
-    facility_unitid = {
-        code: ipeds_unitid(name, state, zip_code)
-        for code, name, state, zip_code in va.execute(
-            "SELECT facility_code, institution, state, zip FROM facilities WHERE approved = 1"
+    def ipeds_unitid(
+        name: str, state: str, zip_code: str | None, city: str | None,
+    ) -> tuple[str | None, bool]:
+        """Exact normalized name first; then name variants ("X-MAIN CAMPUS",
+        "THE X", "X-CITY" -> "X at City"); then one name starting with the
+        other ("ARIZONA STATE UNIVERSITY" -> "Arizona State University Campus
+        Immersion"). A branch matched to its main campus or a sibling campus
+        is fine here: the school's field list only steers the match toward
+        fields the institution teaches. Raised IPEDS-matched program rows
+        from about 74% to about 88%. Returns (unitid, matched exactly)."""
+        exact = ipeds_by_name.get((normalized_name(name), state))
+        if exact:
+            return one_school(exact, zip_code, city) or exact[0], True
+        variants = name_variants(name, city or "")
+        by_variant = set().union(*(ipeds_by_variant.get((v, state), set()) for v in variants))
+        if by_variant:
+            return one_school(by_variant, zip_code, city), False
+        by_prefix = {
+            unitid for other, unitid in ipeds_names_in_state[state] for v in variants
+            if other.startswith(v + " ") or v.startswith(other + " ")
+        }
+        return (one_school(by_prefix, zip_code, city) if by_prefix else None), False
+
+    facility_match = {
+        code: ipeds_unitid(name, state, zip_code, city)
+        for code, name, state, zip_code, city in va.execute(
+            "SELECT facility_code, institution, state, zip, city FROM facilities WHERE approved = 1"
         )
+    }
+    facility_unitid = {code: unitid for code, (unitid, _) in facility_match.items()}
+    school_margin = {
+        code: SCHOOL_MARGIN if exact else LOOSE_SCHOOL_MARGIN
+        for code, (_, exact) in facility_match.items()
     }
     rows = va.execute(
         "SELECT DISTINCT p.facility_code, p.description FROM va_programs p "
@@ -152,7 +288,7 @@ def compute(source: Path, ipeds_path: Path, out: Path) -> None:
         allowed = [cip_index[c] for c in school_cips.get(unitid, []) if c in cip_index]
         if allowed:
             school_best = max(allowed, key=lambda position: similarities[position])
-            if similarities[school_best] >= similarities[best] - SCHOOL_MARGIN:
+            if similarities[school_best] >= similarities[best] - school_margin[facility_code]:
                 pick, method = school_best, "school"
         return {
             "cip": cip_codes[pick],
