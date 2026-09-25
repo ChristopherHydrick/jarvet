@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from typing import Any, Awaitable, Callable
 from urllib.parse import quote
@@ -13,6 +14,9 @@ from app.onet import OnetGraph
 from app.programs import discover_admissions_page
 from app.va import VaComparison
 
+# uvicorn's own logger, so tool calls show in `docker logs jarvet`.
+logger = logging.getLogger("uvicorn.error")
+
 TrainingFetcher = Callable[[str, str], Awaitable[list[dict[str, str]] | None]]
 
 # A city resolves to a single point (the centroid of its most common school
@@ -23,6 +27,7 @@ TrainingFetcher = Callable[[str, str], Awaitable[list[dict[str, str]] | None]]
 # Every distance cutoff is quietly widened by this much; the reply still
 # talks about the radius the veteran asked for.
 RADIUS_BUFFER_MILES = 5.0
+AFSC_SKILL_LEVEL = re.compile(r"\s+(Helper|Apprentice|Journeyman|Craftsman|Superintendent)$")
 # Cap on "Related programs" schools per search: each one costs a live VA API
 # call to enrich its card, and past this many the section stops advising and
 # starts burying the exact matches.
@@ -211,6 +216,24 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "find_va_programs_for_military_job",
+            "description": "Primary source when the user gives a military job code (Army MOS, Air Force AFSC, Navy rating/NEC, Marine Corps MOS, Space Force code) and wants schools or programs for it: goes from the code to its civilian career(s) in the official crosswalk, to the fields of study that lead there, to every VA-approved program in those fields -- no keyword guessing. Also returns related programs for closely related civilian careers (for example nursing for a combat medic). Same location/state/radius_miles/offset rules as find_va_programs.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "military_code": {"type": "string", "description": "The code exactly as the user gave it, e.g. 68W, 25B, 0311, 3D1X2, HM."},
+                    "state": {"type": "string", "description": "Two-letter state code to narrow results. Omit for nationwide. Ignored if location is given."},
+                    "location": {"type": "string", "description": "Known city/state or ZIP to search near, not 'near me'. Omit for a state or nationwide search."},
+                    "radius_miles": {"type": "number", "minimum": 5, "description": "Only with location, and only when the user named a distance."},
+                    "offset": {"type": "integer", "minimum": 0, "description": "0 for a first search; to show more, the previous offset plus the number of facilities already shown."},
+                },
+                "required": ["military_code"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_va_facility",
             "description": "Find one previously named VA-approved provider by exact facility code or institution name and attach its official VA detail-page link. Use for follow-ups asking for a provider link or details, or to list every VA-approved program at one already-named school.",
             "parameters": {
@@ -300,8 +323,72 @@ class JarvetTools:
             for related in self.ipeds.related_fields(cip, limit=6):
                 if related["overlap"] > fields.get(related["cip"], {}).get("overlap", 0):
                     fields[related["cip"]] = related
+        return self._related_facilities(
+            fields, matched_facility_codes, state=state, latitude=latitude,
+            longitude=longitude, max_miles=max_miles,
+        )
+
+    def _military_related_programs(
+        self, careers: list[dict[str, Any]], main_fields: set[str], main_facilities: set[str], *,
+        state: str | None, latitude: float | None, longitude: float | None,
+        max_miles: float | None,
+    ) -> list[dict[str, Any]]:
+        """Related section for a military-job search: lower-confidence
+        programs in the job's own fields, plus fields for O*NET's closest
+        related civilian careers -- the crosswalk links Army 68W (Combat
+        Medic) only to Paramedics, while O*NET relates Paramedics to EMTs,
+        Registered Nurses and LPNs. A catch-all career (25B's "Computer
+        Occupations, All Other") has no related occupations of its own, so
+        those of the specific jobs under it stand in (Information Security
+        Engineers -> Information Security Analysts, Network Architects...)."""
+        fields: dict[str, dict[str, Any]] = {
+            cip: {
+                "title": self.ipeds.cip_titles.get(cip, cip), "overlap": 1.0,
+                "shared_careers": sorted({career["soc"][:7] for career in careers}),
+            }
+            for cip in main_fields
+        }
+        related_codes = []
+        for career in careers:
+            own = self.onet.related_codes(career["soc"], limit=5)
+            if own:
+                related_codes += list(enumerate(own))
+            else:
+                # One step further removed, so only same-family careers
+                # (15-xxxx computer jobs for 25B) -- otherwise Management
+                # Analysts brought in business and even hotel management.
+                for code in career["detail_codes"]:
+                    related_codes += [
+                        (rank, related)
+                        for rank, related in enumerate(self.onet.related_codes(code, limit=3))
+                        if related[:2] == career["soc"][:2]
+                    ]
+        for rank, related in related_codes:
+            for cip in self.ipeds.fields_for_careers([related]):
+                if cip in main_fields:
+                    continue
+                entry = fields.setdefault(cip, {
+                    "title": self.ipeds.cip_titles.get(cip, cip),
+                    "overlap": 0.0, "shared_careers": [],
+                })
+                entry["overlap"] = max(entry["overlap"], 0.9 - 0.1 * rank)
+                if related[:7] not in entry["shared_careers"]:
+                    entry["shared_careers"].append(related[:7])
+        return self._related_facilities(
+            fields, main_facilities, state=state, latitude=latitude,
+            longitude=longitude, max_miles=max_miles,
+        )
+
+    def _related_facilities(
+        self, fields: dict[str, dict[str, Any]], exclude: set[str], *,
+        state: str | None, latitude: float | None, longitude: float | None,
+        max_miles: float | None,
+    ) -> list[dict[str, Any]]:
+        """Schools with programs in fields (CIP code -> {"title", "overlap",
+        "shared_careers"}) outside exclude, each with up to three careers
+        that explain why it is related."""
         facilities = self.va.programs_in_fields(
-            fields, exclude_facilities=matched_facility_codes, state=state,
+            fields, exclude_facilities=exclude, state=state,
             latitude=latitude, longitude=longitude, max_miles=max_miles,
             limit=RELATED_FACILITY_LIMIT,
         )
@@ -383,6 +470,235 @@ class JarvetTools:
                 "action": "Veterans Page",
             })
         return merged
+
+    async def _search_programs(
+        self, arguments: dict[str, Any], search: Any, *, tool_name: str,
+        extra: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Shared scope handling (location, state, radius, paging), card
+        enrichment and reply instructions for the program-search tools.
+        search(state=, latitude=, longitude=, max_miles=, limit=, offset=)
+        returns (result, related_facilities); result is shaped like
+        VaComparison.programs_for's."""
+        extra = extra or {}
+        location_text = str(arguments.get("location", "")).strip()
+        if self.nationwide_requested:
+            # The user's own latest wording explicitly asked for
+            # nationwide/entire-country results -- never let a
+            # model-invented location or radius_miles (observed:
+            # defaulting to the schema's own max, 500) narrow that down
+            # or wrongly demand a ZIP code the user never needed to give.
+            location_text = ""
+            arguments = {**arguments, "radius_miles": None, "state": None}
+        if arguments.get("radius_miles") is not None and not location_text:
+            if arguments.get("state"):
+                # radius_miles only pairs with a specific location -- a
+                # bare state search has no single point to measure
+                # distance from (see the state-filter branch below), so a
+                # model-invented radius here (the same tendency the
+                # nationwide_requested branch above guards against) is
+                # dropped silently instead of blocking a valid state-wide
+                # search and wrongly demanding a ZIP the user never
+                # needed to give.
+                arguments = {**arguments, "radius_miles": None}
+            else:
+                return {
+                    "error": (
+                        "radius_miles was given with no location, so there is nothing to measure "
+                        "the distance from. This is an internal tool-call mistake -- never mention it, "
+                        "the word radius_miles, or any other tool/argument name to the user. Simply ask "
+                        "them, in plain natural language, for their city and state or ZIP code, exactly "
+                        "as you would if this were the first thing you'd tried, then call "
+                        f"{tool_name} again with both location and radius_miles set."
+                    ),
+                }
+        latitude: float | None = None
+        longitude: float | None = None
+        location_label: str | None = None
+        state = arguments.get("state")
+        state = str(state).strip().upper()[:2] if state else None
+        if location_text:
+            location = self.va.resolve_location(location_text)
+            if location is None:
+                return self._location_error(location_text)
+            self.resolved_location = location
+            location_label = location["label"]
+            latitude = location["latitude"]
+            longitude = location["longitude"]
+            # A specific city/ZIP's coordinates make a state filter
+            # redundant, so location scoping supersedes it -- but a bare
+            # state name (no city) only resolves to that state's
+            # centroid, not a real point, and with no radius_miles set
+            # (never invented -- see the tool schema) that would
+            # otherwise silently become an unbounded nationwide
+            # sort-by-distance-from-centroid search, ranking a closer
+            # out-of-state school above a genuine in-state one that's
+            # merely far from the centroid (e.g. El Paso, TX). Keep the
+            # state filter in that case.
+            state = location.get("state") if not location.get("city") else None
+        radius_raw = arguments.get("radius_miles")
+        offset_raw = arguments.get("offset", 0)
+        try:
+            max_miles = (
+                max(5.0, float(radius_raw)) + RADIUS_BUFFER_MILES
+                if radius_raw is not None else None
+            )
+            offset = max(0, int(offset_raw))
+        except (TypeError, ValueError):
+            # A malformed radius_miles/offset from the model would
+            # otherwise raise uncaught here and fail the whole chat turn
+            # with an opaque error instead of letting the model correct
+            # itself and retry within the same turn.
+            return {"error": "radius_miles and offset must be plain numbers."}
+        # Not model-controlled: the model has repeatedly chosen small
+        # round-number limits (e.g. 10) on its own regardless of the
+        # schema's declared default, silently truncating "show me all"
+        # requests. Always return the full result set up to this ceiling
+        # on a first page; a "show more" continuation (offset > 0) then
+        # steps forward 50 at a time.
+        page_limit = 100 if offset == 0 else 50
+        result, related_facilities = search(
+            state=state, latitude=latitude, longitude=longitude, max_miles=max_miles,
+            limit=page_limit, offset=offset,
+        )
+        # Live-enrich every matched facility (housing rate, GI Bill
+        # student count, contact) concurrently. This means one live VA
+        # API round trip per result, so a broad nationwide search can
+        # take noticeably longer to reply than a narrow one.
+        result["facilities"] = await asyncio.gather(*(
+            self._add_provider_resource(facility)
+            for facility in result["facilities"]
+        ))
+        # Give every school with a known website its own resource so the
+        # inline mention of its name in the reply text links to the
+        # school's own site rather than only the VA Comparison Tool page
+        # (appendLinkedText on the frontend prefers a "program-details"
+        # kind resource over "provider-details" for the same label).
+        for facility in result["facilities"]:
+            if not facility.get("website"):
+                continue
+            self._add_resource({
+                "label": f"Visit {facility['institution']}'s website",
+                "url": facility["website"],
+                "kind": "school-website",
+                "group": str(facility["institution"]).title(),
+                "action": "School website",
+            })
+        # For facilities with no VA-confirmed website at all, a separate
+        # offline script (scripts/init-va-website-guesses.py) may have a
+        # best-effort candidate found via web search. This is never
+        # crawled further (compounding an already-unverified URL isn't
+        # worth it) and is always labeled distinctly so it can't be
+        # mistaken for a VA-confirmed link.
+        for facility in result["facilities"]:
+            if facility.get("website") or not facility.get("guessed_website"):
+                continue
+            self._add_resource({
+                "label": f"Unverified: possible website for {facility['institution']}",
+                "url": facility["guessed_website"],
+                "kind": "unverified-website",
+                "group": str(facility["institution"]).title(),
+                "action": "Unverified school link",
+            })
+        # Enriched after the exact matches so their cards come first and
+        # the related cards follow under their own "Related programs"
+        # heading (see renderResources in app/static/app.js).
+        related_facilities = await asyncio.gather(*(
+            self._add_provider_resource(facility) for facility in related_facilities
+        ))
+        self.listed_facilities = {
+            "main": list(result["facilities"]), "related": list(related_facilities),
+        }
+        has_semantic_matches = any(
+            facility.get("match_type") == "semantic" for facility in result["facilities"]
+        )
+        return {
+            **result,
+            **extra,
+            "related_facilities": related_facilities,
+            # The model once moved exact matches that sat just past the
+            # requested radius into its own "Related programs just outside
+            # 20 miles" section and dropped the real related schools from
+            # the text entirely -- so spell out both sections' exact line
+            # counts and the related schools by name.
+            "related_note": (
+                f"Your reply has exactly two lists. LIST 1: exactly {len(result['facilities'])} "
+                "'• ' lines, one per entry in facilities (the exact matches), all under your "
+                "opening sentence -- every one of them belongs in LIST 1 whatever its "
+                "distance_miles; never split any of them off into another section. LIST 2: "
+                "after LIST 1, a line reading exactly 'Related programs', then one plain "
+                "sentence saying these are other approved schools in closely related fields "
+                "that lead to similar jobs, then exactly "
+                f"{len(related_facilities)} '• ' lines, one per entry in related_facilities, "
+                "in this order: "
+                + "; ".join(str(item["institution"]).title() for item in related_facilities)
+                + ". Each LIST 2 line gives the school, city"
+                + (", distance" if location_label else "")
+                + ", its related program name(s) from matching_programs, and why it is "
+                "related in plain words from related_careers (for example 'also leads to jobs "
+                "like Software Developer'). related_facilities are NOT matches for the search "
+                "words and are NOT counted in total_facilities; never call them matches."
+            ) if related_facilities else "",
+
+            "location": location_label or ("statewide" if state else "nationwide"),
+            "note": (
+                (
+                    "No program title in VA's catalog contains the search words themselves, "
+                    "so these were found by matching the search's MEANING instead (for example "
+                    "an 'EMT' search matching a program titled 'Emergency Medical Technician'). "
+                    "These are still real, VA-approved programs -- present them normally -- but "
+                    "if asked how confident this match is, say it was found by meaning rather "
+                    "than an exact program-title match. "
+                    if has_semantic_matches else ""
+                ) +
+                "The facilities list below already contains every matched result for this "
+                "page, not a preview or a curated sample -- your reply MUST name every "
+                "single one of them as its own '• ' bulleted line, in the order given, with "
+                "zero omitted, even when that is dozens of lines long. If you were given, "
+                "say, 68 facilities here, your reply must contain exactly 68 bulleted "
+                "lines, one per institution -- never write 'here are some examples,' "
+                "'notable examples,' 'a few highlights,' or any other phrasing that implies "
+                "a subset: that is a direct violation of this instruction regardless of how "
+                "long the full list is. The frontend auto-links each institution name "
+                "mentioned in your text to its own resource, so omitting a name from the "
+                "text loses that link even though its card still appears below. "
+                "These are exact-name VA-approved facilities with at least one matching "
+                "IHL or NCD program in VA's own catalog. total_facilities is the exact, "
+                "precisely known count; open your reply with that exact number (for "
+                "example 'Found 25 VA-approved diver programs') rather than a vague "
+                "quantifier like several, many, or multiple. If total_facilities exceeds "
+                "the number of results actually returned here, say how many more exist "
+                "beyond those named -- but every result that WAS returned here still gets "
+                "its own line regardless. Only when "
+                "remaining_facilities is above 0, end your reply by offering to show more, and "
+                "include a suggestion whose value asks to see the next batch (for example 'Show "
+                "50 more marketing programs'); if the user picks it or asks for more, call "
+                f"{tool_name} again with the exact same arguments "
+                "plus offset set to this result's offset plus the number of facilities just "
+                "shown, so the next call continues past what the user already saw instead of "
+                "repeating it. When remaining_facilities is 0, never offer or suggest showing "
+                "more results. " + (
+                    "Results are ranked by distance from " + str(location_label) + "; each "
+                    "facility's distance_miles is the actual distance, and a radius_miles cutoff "
+                    "already excluded anything farther, so never claim a result is within a "
+                    "range wider than what was actually requested. A few results may sit a "
+                    "little past the requested radius on purpose, since a city's center point "
+                    "is only approximate: list them like every other result, never drop them "
+                    "for being slightly over, and never mention a buffer or extra miles. "
+                    "Give each school's distance on its line, rounded to one decimal "
+                    "(for example 'Stanford University, Stanford - 4.3 miles'). "
+                    "Facilities with no usable "
+                    "coordinates on file could not be placed and are excluded from this scope, "
+                    "not confirmed absent from the area."
+                    if location_label else
+                    "This does not rank by distance; mention state or nationwide scope explicitly."
+                ) + " A guessed_website on a "
+                "facility was found by web search, not confirmed by VA -- never state it as "
+                "the school's website or say VA confirms it; if you mention it at all, call "
+                "it an unverified possible website the person should confirm themselves. Never "
+                "invent a facility not in the results."
+            ),
+        }
 
     def _location_error(self, location: str) -> dict[str, Any]:
         self.location_candidates = self.va.location_candidates(location)
@@ -596,234 +912,123 @@ class JarvetTools:
             program = str(arguments.get("program", "")).strip()
             if not program:
                 return {"error": "A program or trade keyword is required."}
-            location_text = str(arguments.get("location", "")).strip()
-            if self.nationwide_requested:
-                # The user's own latest wording explicitly asked for
-                # nationwide/entire-country results -- never let a
-                # model-invented location or radius_miles (observed:
-                # defaulting to the schema's own max, 500) narrow that down
-                # or wrongly demand a ZIP code the user never needed to give.
-                location_text = ""
-                arguments = {**arguments, "radius_miles": None, "state": None}
-            if arguments.get("radius_miles") is not None and not location_text:
-                if arguments.get("state"):
-                    # radius_miles only pairs with a specific location -- a
-                    # bare state search has no single point to measure
-                    # distance from (see the state-filter branch below), so a
-                    # model-invented radius here (the same tendency the
-                    # nationwide_requested branch above guards against) is
-                    # dropped silently instead of blocking a valid state-wide
-                    # search and wrongly demanding a ZIP the user never
-                    # needed to give.
-                    arguments = {**arguments, "radius_miles": None}
-                else:
-                    return {
-                        "error": (
-                            "radius_miles was given with no location, so there is nothing to measure "
-                            "the distance from. This is an internal tool-call mistake -- never mention it, "
-                            "the word radius_miles, or any other tool/argument name to the user. Simply ask "
-                            "them, in plain natural language, for their city and state or ZIP code, exactly "
-                            "as you would if this were the first thing you'd tried, then call "
-                            "find_va_programs again with both location and radius_miles set."
-                        ),
-                    }
-            latitude: float | None = None
-            longitude: float | None = None
-            location_label: str | None = None
-            state = arguments.get("state")
-            state = str(state).strip().upper()[:2] if state else None
-            if location_text:
-                location = self.va.resolve_location(location_text)
-                if location is None:
-                    return self._location_error(location_text)
-                self.resolved_location = location
-                location_label = location["label"]
-                latitude = location["latitude"]
-                longitude = location["longitude"]
-                # A specific city/ZIP's coordinates make a state filter
-                # redundant, so location scoping supersedes it -- but a bare
-                # state name (no city) only resolves to that state's
-                # centroid, not a real point, and with no radius_miles set
-                # (never invented -- see the tool schema) that would
-                # otherwise silently become an unbounded nationwide
-                # sort-by-distance-from-centroid search, ranking a closer
-                # out-of-state school above a genuine in-state one that's
-                # merely far from the centroid (e.g. El Paso, TX). Keep the
-                # state filter in that case.
-                state = location.get("state") if not location.get("city") else None
-            radius_raw = arguments.get("radius_miles")
-            offset_raw = arguments.get("offset", 0)
-            try:
-                max_miles = (
-                    max(5.0, float(radius_raw)) + RADIUS_BUFFER_MILES
-                    if radius_raw is not None else None
-                )
-                offset = max(0, int(offset_raw))
-            except (TypeError, ValueError):
-                # A malformed radius_miles/offset from the model would
-                # otherwise raise uncaught here and fail the whole chat turn
-                # with an opaque error instead of letting the model correct
-                # itself and retry within the same turn.
-                return {"error": "radius_miles and offset must be plain numbers."}
-            # Not model-controlled: the model has repeatedly chosen small
-            # round-number limits (e.g. 10) on its own regardless of the
-            # schema's declared default, silently truncating "show me all"
-            # requests. Always return the full result set up to this ceiling
-            # on a first page; a "show more" continuation (offset > 0) then
-            # steps forward 50 at a time.
-            page_limit = 100 if offset == 0 else 50
-            result = self.va.programs_for(
-                program, state=state, limit=page_limit, offset=offset,
-                latitude=latitude, longitude=longitude, max_miles=max_miles,
-            )
-            matched_facility_codes = set(result.pop("_matched_facility_codes", []))
-            matched_fields = result.pop("_matched_fields", [])
-            # Related programs are a first-page addition only; a "show more"
-            # continuation pages through the exact matches alone.
-            related_facilities = (
-                self._related_programs(
-                    matched_fields, matched_facility_codes, state=state,
-                    latitude=latitude, longitude=longitude, max_miles=max_miles,
-                )
-                if offset == 0 else []
-            )
-            # Live-enrich every matched facility (housing rate, GI Bill
-            # student count, contact) concurrently. This means one live VA
-            # API round trip per result, so a broad nationwide search can
-            # take noticeably longer to reply than a narrow one.
-            result["facilities"] = await asyncio.gather(*(
-                self._add_provider_resource(facility)
-                for facility in result["facilities"]
-            ))
-            # Give every school with a known website its own resource so the
-            # inline mention of its name in the reply text links to the
-            # school's own site rather than only the VA Comparison Tool page
-            # (appendLinkedText on the frontend prefers a "program-details"
-            # kind resource over "provider-details" for the same label).
-            for facility in result["facilities"]:
-                if not facility.get("website"):
-                    continue
-                self._add_resource({
-                    "label": f"Visit {facility['institution']}'s website",
-                    "url": facility["website"],
-                    "kind": "school-website",
-                    "group": str(facility["institution"]).title(),
-                    "action": "School website",
-                })
-            # For facilities with no VA-confirmed website at all, a separate
-            # offline script (scripts/init-va-website-guesses.py) may have a
-            # best-effort candidate found via web search. This is never
-            # crawled further (compounding an already-unverified URL isn't
-            # worth it) and is always labeled distinctly so it can't be
-            # mistaken for a VA-confirmed link.
-            for facility in result["facilities"]:
-                if facility.get("website") or not facility.get("guessed_website"):
-                    continue
-                self._add_resource({
-                    "label": f"Unverified: possible website for {facility['institution']}",
-                    "url": facility["guessed_website"],
-                    "kind": "unverified-website",
-                    "group": str(facility["institution"]).title(),
-                    "action": "Unverified school link",
-                })
-            # Enriched after the exact matches so their cards come first and
-            # the related cards follow under their own "Related programs"
-            # heading (see renderResources in app/static/app.js).
-            related_facilities = await asyncio.gather(*(
-                self._add_provider_resource(facility) for facility in related_facilities
-            ))
-            self.listed_facilities = {
-                "main": list(result["facilities"]), "related": list(related_facilities),
-            }
-            has_semantic_matches = any(
-                facility.get("match_type") == "semantic" for facility in result["facilities"]
-            )
-            return {
-                **result,
-                "related_facilities": related_facilities,
-                # The model once moved exact matches that sat just past the
-                # requested radius into its own "Related programs just outside
-                # 20 miles" section and dropped the real related schools from
-                # the text entirely -- so spell out both sections' exact line
-                # counts and the related schools by name.
-                "related_note": (
-                    f"Your reply has exactly two lists. LIST 1: exactly {len(result['facilities'])} "
-                    "'• ' lines, one per entry in facilities (the exact matches), all under your "
-                    "opening sentence -- every one of them belongs in LIST 1 whatever its "
-                    "distance_miles; never split any of them off into another section. LIST 2: "
-                    "after LIST 1, a line reading exactly 'Related programs', then one plain "
-                    "sentence saying these are other approved schools in closely related fields "
-                    "that lead to similar jobs, then exactly "
-                    f"{len(related_facilities)} '• ' lines, one per entry in related_facilities, "
-                    "in this order: "
-                    + "; ".join(str(item["institution"]).title() for item in related_facilities)
-                    + ". Each LIST 2 line gives the school, city"
-                    + (", distance" if location_label else "")
-                    + ", its related program name(s) from matching_programs, and why it is "
-                    "related in plain words from related_careers (for example 'also leads to jobs "
-                    "like Software Developer'). related_facilities are NOT matches for the search "
-                    "words and are NOT counted in total_facilities; never call them matches."
-                ) if related_facilities else "",
 
-                "location": location_label or ("statewide" if state else "nationwide"),
-                "note": (
-                    (
-                        "No program title in VA's catalog contains the search words themselves, "
-                        "so these were found by matching the search's MEANING instead (for example "
-                        "an 'EMT' search matching a program titled 'Emergency Medical Technician'). "
-                        "These are still real, VA-approved programs -- present them normally -- but "
-                        "if asked how confident this match is, say it was found by meaning rather "
-                        "than an exact program-title match. "
-                        if has_semantic_matches else ""
-                    ) +
-                    "The facilities list below already contains every matched result for this "
-                    "page, not a preview or a curated sample -- your reply MUST name every "
-                    "single one of them as its own '• ' bulleted line, in the order given, with "
-                    "zero omitted, even when that is dozens of lines long. If you were given, "
-                    "say, 68 facilities here, your reply must contain exactly 68 bulleted "
-                    "lines, one per institution -- never write 'here are some examples,' "
-                    "'notable examples,' 'a few highlights,' or any other phrasing that implies "
-                    "a subset: that is a direct violation of this instruction regardless of how "
-                    "long the full list is. The frontend auto-links each institution name "
-                    "mentioned in your text to its own resource, so omitting a name from the "
-                    "text loses that link even though its card still appears below. "
-                    "These are exact-name VA-approved facilities with at least one matching "
-                    "IHL or NCD program in VA's own catalog. total_facilities is the exact, "
-                    "precisely known count; open your reply with that exact number (for "
-                    "example 'Found 25 VA-approved diver programs') rather than a vague "
-                    "quantifier like several, many, or multiple. If total_facilities exceeds "
-                    "the number of results actually returned here, say how many more exist "
-                    "beyond those named -- but every result that WAS returned here still gets "
-                    "its own line regardless. Only when "
-                    "remaining_facilities is above 0, end your reply by offering to show more, and "
-                    "include a suggestion whose value asks to see the next batch (for example 'Show "
-                    "50 more marketing programs'); if the user picks it or asks for more, call "
-                    "find_va_programs again with the exact same program/state/location/radius_miles "
-                    "plus offset set to this result's offset plus the number of facilities just "
-                    "shown, so the next call continues past what the user already saw instead of "
-                    "repeating it. When remaining_facilities is 0, never offer or suggest showing "
-                    "more results. " + (
-                        "Results are ranked by distance from " + str(location_label) + "; each "
-                        "facility's distance_miles is the actual distance, and a radius_miles cutoff "
-                        "already excluded anything farther, so never claim a result is within a "
-                        "range wider than what was actually requested. A few results may sit a "
-                        "little past the requested radius on purpose, since a city's center point "
-                        "is only approximate: list them like every other result, never drop them "
-                        "for being slightly over, and never mention a buffer or extra miles. "
-                        "Give each school's distance on its line, rounded to one decimal "
-                        "(for example 'Stanford University, Stanford - 4.3 miles'). "
-                        "Facilities with no usable "
-                        "coordinates on file could not be placed and are excluded from this scope, "
-                        "not confirmed absent from the area."
-                        if location_label else
-                        "This does not rank by distance; mention state or nationwide scope explicitly."
-                    ) + " A guessed_website on a "
-                    "facility was found by web search, not confirmed by VA -- never state it as "
-                    "the school's website or say VA confirms it; if you mention it at all, call "
-                    "it an unverified possible website the person should confirm themselves. Never "
-                    "invent a facility not in the results."
-                ),
+            def search(**scope: Any) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+                result = self.va.programs_for(program, **scope)
+                matched_facility_codes = set(result.pop("_matched_facility_codes", []))
+                matched_fields = result.pop("_matched_fields", [])
+                # Related programs are a first-page addition only; a "show
+                # more" continuation pages through the exact matches alone.
+                related = (
+                    self._related_programs(
+                        matched_fields, matched_facility_codes, state=scope["state"],
+                        latitude=scope["latitude"], longitude=scope["longitude"],
+                        max_miles=scope["max_miles"],
+                    )
+                    if scope["offset"] == 0 else []
+                )
+                return result, related
+
+            return await self._search_programs(arguments, search, tool_name="find_va_programs")
+
+        if name == "find_va_programs_for_military_job":
+            code = str(arguments.get("military_code", "")).strip().upper()
+            careers = self.onet.military_careers(code) if code else []
+            if not careers:
+                return {"error": (
+                    f"{code or 'No code'} is not in the official military-to-civilian crosswalk. "
+                    "Ask the user to double-check the code (and which branch it is from), or ask "
+                    "what kind of civilian work they want and search for that instead."
+                )}
+            socs = [career["soc"] for career in careers]
+            military_job = {
+                "code": code,
+                # An AFSC entered as "1D7X1" covers every skill level and
+                # shred ("Cyber Defense Operations Apprentice, Networks
+                # Operations") -- name the specialty itself.
+                "titles": sorted({
+                    AFSC_SKILL_LEVEL.sub("", career["military_title"].split(",")[0])
+                    for career in careers
+                }),
+                "branches": sorted({career["branch"] for career in careers}),
             }
+            civilian_careers = [
+                {
+                    "title": career["title"] or career["soc"],
+                    **({"includes_jobs_like": career["example_jobs"]} if career["example_jobs"] else {}),
+                }
+                for career in careers
+            ]
+            fields = self.ipeds.fields_for_careers(socs)
+            if not fields:
+                return {
+                    "military_job": military_job,
+                    "civilian_careers": civilian_careers,
+                    "error": (
+                        "The official crosswalk links this military job to no civilian field of "
+                        "study (it has no direct civilian counterpart -- infantry is an example). "
+                        "Say so plainly and kindly, without jargon such as 'crosswalk' (say the "
+                        "official military-to-civilian job list instead), then offer a next step: "
+                        "ask what kind of work "
+                        "they would like to do, or look at civilian careers that use the same "
+                        "skills with search_occupations."
+                    ),
+                }
+            field_map = {
+                cip: {"title": self.ipeds.cip_titles.get(cip, cip), "overlap": 1.0}
+                for cip in fields
+            }
+
+            def search(**scope: Any) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+                matches = self.va.programs_in_fields(
+                    field_map, exclude_facilities=set(), state=scope["state"],
+                    latitude=scope["latitude"], longitude=scope["longitude"],
+                    max_miles=scope["max_miles"], limit=100_000,
+                    min_score=self.va.FIELD_EXACT_MIN_SCORE,
+                )
+                for facility in matches:
+                    # The frontend files any card with related_fields under
+                    # "Related programs"; these are the main results.
+                    facility["fields_of_study"] = facility.pop("related_fields")
+                page = matches[scope["offset"]:scope["offset"] + scope["limit"]]
+                result = {
+                    "total_facilities": len(matches),
+                    "total_programs": sum(item["matching_program_count"] for item in matches),
+                    "facilities": page,
+                    "offset": scope["offset"],
+                    "remaining_facilities": max(0, len(matches) - scope["offset"] - len(page)),
+                    "source": (
+                        "Official military-to-civilian crosswalk, CIP-to-SOC crosswalk, and VA's "
+                        "approved program catalog"
+                    ),
+                }
+                related = (
+                    self._military_related_programs(
+                        careers, set(fields), {item["facility_code"] for item in matches},
+                        state=scope["state"], latitude=scope["latitude"],
+                        longitude=scope["longitude"], max_miles=scope["max_miles"],
+                    )
+                    if scope["offset"] == 0 else []
+                )
+                return result, related
+
+            return await self._search_programs(
+                arguments, search, tool_name="find_va_programs_for_military_job",
+                extra={
+                    "military_job": military_job,
+                    "civilian_careers": civilian_careers,
+                    "fields_of_study": [item["title"] for item in field_map.values()],
+                    "career_note": (
+                        "These schools were found from the military job itself: its civilian "
+                        "career(s) in the official crosswalk, then every VA-approved program in the "
+                        "fields of study that lead there -- not a keyword search. Never use jargon "
+                        "such as 'crosswalk', 'CIP' or 'SOC' in the reply. Open by naming "
+                        "the military job and its civilian career(s) in plain words, then give "
+                        "the count. When a civilian career is a catch-all (its title ends in 'All "
+                        "Other'), describe it in plain words using its includes_jobs_like jobs."
+                    ),
+                },
+            )
 
         if name == "get_va_facility":
             facility = self.va.find_facility(str(arguments.get("query", "")))
@@ -1045,6 +1250,23 @@ def arrange_listings(message: str, listed: dict[str, list[dict[str, Any]]]) -> s
     return "\n".join(output + suffix)
 
 
+def _result_summary(result: Any) -> str:
+    """One short line describing a tool result, for the log."""
+    if isinstance(result, dict):
+        if result.get("error"):
+            return "error: " + str(result["error"])[:120]
+        parts = [
+            f"{key}={result[key]}" for key in ("total_facilities", "total_programs", "total")
+            if key in result
+        ]
+        if "related_facilities" in result:
+            parts.append(f"related={len(result['related_facilities'])}")
+        return ", ".join(parts) or "keys: " + ", ".join(list(result)[:8])
+    if isinstance(result, list):
+        return f"{len(result)} items"
+    return type(result).__name__
+
+
 async def run_agent(
     *, messages: list[dict[str, str]], profile: dict[str, list[str]],
     selected_occupation: dict[str, str] | None, saved_providers: list[dict[str, str]],
@@ -1070,9 +1292,10 @@ Operating principles:
 - Preserve the current selected occupation unless the user clearly changes career goals. If they do, search and then call get_occupation for the best supported match.
 - When search_occupations returns several plausible matches, do not silently pick one. Present the top matches with one-line distinctions and let the user choose, unless one is an obviously exact match for the user's words. A user who said "fix cars" means automotive work; if the best match is not automotive, say why and offer the automotive match.
 - Treat spelling errors and conversational wording intelligently. Search by concrete work tasks when a title is unclear.
-- When a search_occupations result carries military_match, treat it as a confirmed selection, not one of several guesses to let the user pick from -- it came from an official military-to-civilian crosswalk, not a text search. Tell them which branch and military title it came from, call get_occupation on the matched code to see its education/job zone requirements, and in the same reply proactively look up matching degree or certificate programs (find_local_training or find_va_programs, nationwide if no location is known yet). Do not stop at describing the occupation and asking whether they want programs -- the user asked how to get there, not just what the job is. If more than one civilian occupation was matched, lead with the most fitting one and mention the others as alternatives.
+- When a search_occupations result carries military_match, treat it as a confirmed selection, not one of several guesses to let the user pick from -- it came from an official military-to-civilian crosswalk, not a text search. Tell them which branch and military title it came from, call get_occupation on the matched code to see its education/job zone requirements, and in the same reply proactively look up matching degree or certificate programs with find_va_programs_for_military_job (nationwide if no location is known yet). Do not stop at describing the occupation and asking whether they want programs -- the user asked how to get there, not just what the job is. If more than one civilian occupation was matched, lead with the most fitting one and mention the others as alternatives.
 - The first time in a conversation you mention a Bright Outlook / high-demand / growing occupation, explain in one plain-language clause what that means (O*NET projects the field will grow quickly, add many openings, or is a new/emerging field) -- never use the label "Bright Outlook" on its own without that explanation, since most users have never heard the term.
 - When the user asks for high-demand/growing/Bright Outlook jobs tied to a military code or interest, call search_occupations with bright_outlook_only true. If that yields nothing (the exact military-code match is not itself Bright Outlook), call get_related_occupations on the matched code and keep only results with a non-empty bright_outlook, presenting them as related high-demand options rather than the exact match. Once you have the qualifying occupation(s), proactively look up matching degree/training programs for each (find_local_training or find_va_programs) rather than stopping at the occupation list -- the user asked for degrees, not just job titles.
+- When the user gives a military job code and wants schools, programs, degrees, or training for it, call find_va_programs_for_military_job with the code as given (plus location/state/radius_miles under the same rules as find_va_programs). Never turn the code into guessed keywords for find_va_programs -- keyword guesses miss programs titled differently. If it reports no civilian field of study (for example infantry), say so plainly and offer a next step rather than inventing a match.
 - "My MOS" (or similar shorthand) refers to the user's own military job code, not a literal search term. If a request mentions it but no code is on file yet and none was given in this message, ask for the code before calling search_occupations -- never search using words like "MOS," "high demand," or "my interests" themselves, since they are not real occupation or search terms and will return meaningless matches.
 - Accept city/state, region, or ZIP. "Near me" means the known profile location. Never interpret pronouns as state abbreviations and never demand a ZIP when a named area is known.
 - When the user names a place that is not a city or state (a region, landmark, or area such as Lake Tahoe), resolve the nearest well-known city or the containing state, say which anchor you used, and search from there. Never silently substitute a different location from the profile.
@@ -1118,9 +1341,15 @@ Preserve valid profile facts, update direct user corrections, and do not infer s
     conversation: list[dict[str, Any]] = [{"role": "system", "content": system}, *messages[-16:]]
     headers = {"Authorization": f"Bearer {api_key}"}
     endpoint = f"{base_url.rstrip('/')}/chat/completions"
-    force_program_search = wants_named_program_search(
-        messages[-1]["content"] if messages else "", selected_occupation,
-    )
+    latest_message = messages[-1]["content"] if messages else ""
+    force_program_search = wants_named_program_search(latest_message, selected_occupation)
+    # A program request naming a military job code ("I was a 68W, what
+    # schools...") goes to the military-job search; forcing the keyword
+    # search there searched for the code itself and found nothing.
+    forced_program_tool = (
+        "find_va_programs_for_military_job" if onet.military_code_in(latest_message)
+        else "find_va_programs"
+    ) if force_program_search else None
 
     async with httpx.AsyncClient(timeout=180) as client:
         for turn_index in range(8):
@@ -1129,8 +1358,8 @@ Preserve valid profile facts, update direct user corrections, and do not infer s
                 "messages": conversation,
                 "tools": TOOL_SCHEMAS,
                 "tool_choice": (
-                    {"type": "function", "function": {"name": "find_va_programs"}}
-                    if force_program_search and turn_index == 0
+                    {"type": "function", "function": {"name": forced_program_tool}}
+                    if forced_program_tool and turn_index == 0
                     else "auto"
                 ),
                 "temperature": 0.2,
@@ -1153,12 +1382,16 @@ Preserve valid profile facts, update direct user corrections, and do not infer s
                 }
             for tool_call in tool_calls:
                 function = tool_call.get("function", {})
+                logger.info(
+                    "tool %s %s", function.get("name", ""), str(function.get("arguments") or "")[:300],
+                )
                 try:
                     arguments = json.loads(function.get("arguments") or "{}")
                 except json.JSONDecodeError:
                     result = {"error": "Tool arguments were not valid JSON."}
                 else:
                     result = await tools.call(function.get("name", ""), arguments)
+                logger.info("tool %s -> %s", function.get("name", ""), _result_summary(result))
                 conversation.append({
                     "role": "tool",
                     "tool_call_id": tool_call["id"],

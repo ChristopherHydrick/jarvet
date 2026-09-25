@@ -2,10 +2,13 @@
 
 Runs the saved searches in scripts/search-checks.json two ways:
 
-  db   -- through the app's own search code (VaComparison.programs_for plus
-          JarvetTools._related_programs, with the same 5-mile radius buffer),
+  db   -- through the app's own search tool (find_va_programs, or
+          find_va_programs_for_military_job for a check with military_code)
           against the live database opened READ-ONLY, and compares the exact
-          and related school counts with the saved expected numbers.
+          and related school counts with the saved expected numbers. Two
+          stand-ins: the live VA lookup each card gets is skipped, and O*NET's
+          related occupations come from data/db_31_0_nt (the file the app's
+          Oxigraph store is built from) since pyoxigraph isn't on Windows.
   app  -- as chat messages to the running app (POST /api/chat), and checks
           that the cards and the reply's two bullet lists match the db counts.
 
@@ -21,7 +24,10 @@ Exits 1 if any check fails.
 from __future__ import annotations
 
 import argparse
+import asyncio
+import collections
 import json
+import re
 import sqlite3
 import sys
 import time
@@ -40,7 +46,7 @@ _pyox = types.ModuleType("pyoxigraph")
 _pyox.Store = object
 sys.modules.setdefault("pyoxigraph", _pyox)
 
-from app.agent import RADIUS_BUFFER_MILES, RELATED_HEADING, JarvetTools  # noqa: E402
+from app.agent import RELATED_HEADING, JarvetTools  # noqa: E402
 from app.ipeds import IpedsIndex  # noqa: E402
 from app.onet import OnetGraph  # noqa: E402
 from app.va import VaComparison, _normalized  # noqa: E402
@@ -79,31 +85,76 @@ def build_tools() -> tuple[VaComparison, JarvetTools]:
     return va, JarvetTools(onet, va, ipeds, {}, None, "")
 
 
+ONET_RDF = ROOT / "data" / "db_31_0_nt"
+TRIPLE = re.compile(r'<([^>]+)> <[^>]*/([^/>]+)> (<[^>]+>|"[^"]*")')
+
+
+def onet_related_codes() -> dict[str, list[str]]:
+    """O*NET occupation code -> related occupation codes in relatedIndex
+    order, from the same RDF files the app's Oxigraph store is built from."""
+    codes: dict[str, str] = {}
+    owners: dict[str, str] = {}
+    with open(ONET_RDF / "Occupation.nt", encoding="utf-8") as source:
+        for line in source:
+            match = TRIPLE.match(line)
+            if not match:
+                continue
+            subject, predicate, value = match.groups()
+            if predicate == "onetSOCCode":
+                codes[subject] = value.strip('"')
+            elif predicate == "hasRelatedOccupation":
+                owners[value.strip("<>")] = subject
+    links: dict[str, dict[str, str]] = collections.defaultdict(dict)
+    with open(ONET_RDF / "RelatedOccupationLinkage.nt", encoding="utf-8") as source:
+        for line in source:
+            match = TRIPLE.match(line)
+            if match and match.group(2) in ("refersTo", "relatedIndex"):
+                links[match.group(1)][match.group(2)] = match.group(3)
+    related: dict[str, list[tuple[int, str]]] = collections.defaultdict(list)
+    for link, values in links.items():
+        if link in owners and "refersTo" in values:
+            related[codes[owners[link]]].append(
+                (int(values.get("relatedIndex", '"99"').strip('"')), codes[values["refersTo"].strip("<>")])
+            )
+    return {code: [item for _, item in sorted(items)] for code, items in related.items()}
+
+
+def patch_for_offline(tools: JarvetTools) -> None:
+    async def no_live_lookup(facility: dict, *args, **kwargs) -> dict:
+        return facility
+    tools._add_provider_resource = no_live_lookup
+    related: dict[str, list[str]] | None = None
+
+    def related_codes(code: str, limit: int = 5) -> list[str]:
+        nonlocal related
+        if related is None:
+            related = onet_related_codes()
+        return related.get(code, [])[:limit]
+    tools.onet.related_codes = related_codes
+
+
 def db_counts(va: VaComparison, tools: JarvetTools, check: dict) -> dict:
-    """The same steps find_va_programs takes for a first page."""
-    latitude = longitude = None
-    state = check.get("state")
-    if check.get("location"):
-        location = va.resolve_location(check["location"])
-        if location is None:
-            raise ValueError(f"location not found: {check['location']}")
-        latitude, longitude = location["latitude"], location["longitude"]
-        state = location.get("state") if not location.get("city") else None
-    radius = check.get("radius")
-    max_miles = max(5.0, float(radius)) + RADIUS_BUFFER_MILES if radius is not None else None
-    result = va.programs_for(
-        check["program"], state=state, limit=100, latitude=latitude, longitude=longitude,
-        max_miles=max_miles,
-    )
-    codes = set(result.pop("_matched_facility_codes", []))
-    fields = result.pop("_matched_fields", [])
-    related = tools._related_programs(
-        fields, codes, state=state, latitude=latitude, longitude=longitude, max_miles=max_miles,
-    )
+    """Runs the check through the app's own tool, as the chat would call it."""
+    if "military_code" in check:
+        name, arguments = "find_va_programs_for_military_job", {"military_code": check["military_code"]}
+    else:
+        name, arguments = "find_va_programs", {"program": check["program"]}
+    for key, argument in (("location", "location"), ("state", "state"), ("radius", "radius_miles")):
+        if check.get(key) is not None:
+            arguments[argument] = check[key]
+    tools.listed_facilities = {}
+    result = asyncio.run(tools.call(name, arguments))
+    listed = tools.listed_facilities
+    if not listed and result.get("error"):
+        # A military job with no civilian field of study is a real answer
+        # (expect 0 + 0); anything else is a failure.
+        if "no civilian field of study" not in result["error"]:
+            raise ValueError(result["error"])
+    main, related = listed.get("main", []), listed.get("related", [])
     return {
-        "exact": len(result["facilities"]),
+        "exact": len(main),
         "related": len(related),
-        "exact_names": sorted(str(f["institution"]) for f in result["facilities"]),
+        "exact_names": sorted(str(f["institution"]) for f in main),
         "related_names": sorted(str(f["institution"]) for f in related),
     }
 
@@ -172,6 +223,7 @@ def main() -> int:
 
     print("== Database checks (app search code, read-only) ==")
     va, tools = build_tools()
+    patch_for_offline(tools)
     db_results: dict[str, dict] = {}
     for check in checks:
         try:

@@ -43,6 +43,7 @@ class IpedsIndex:
         self.program_count = 0
         self.cip_titles: dict[str, str] = {}
         self.field_careers: dict[str, set[str]] = {}
+        self.career_fields: dict[str, set[str]] = {}
 
     def load(self) -> None:
         if not self.path.exists():
@@ -72,6 +73,18 @@ class IpedsIndex:
             }
             for cip, socs in linked.items()
         }
+        # Career -> fields for going from a job (e.g. a military job's civilian
+        # match) to what to study. Unlike field_careers this keeps "All Other"
+        # catch-alls -- a job's own code is all there is to go on, and the
+        # Army 25B's current civilian match is "Computer Occupations, All
+        # Other" -- but still drops careers linked to so many fields that
+        # they point nowhere in particular.
+        career_fields: dict[str, set[str]] = collections.defaultdict(set)
+        for cip, socs in linked.items():
+            for soc in socs:
+                if fields_per_career[soc] <= GENERIC_CAREER_FIELD_LIMIT:
+                    career_fields[soc].add(cip)
+        self.career_fields = dict(career_fields)
 
     def related_fields(self, cip: str, limit: int = 8) -> list[dict[str, Any]]:
         """Fields of study that prepare for the same careers as cip, most
@@ -96,6 +109,13 @@ class IpedsIndex:
             }
             for overlap, other, shared in scored[:limit]
         ]
+
+    def fields_for_careers(self, soc_codes: list[str]) -> list[str]:
+        """Fields of study the CIP-to-SOC crosswalk links to any of these
+        careers (SOC codes; an O*NET code's .00 suffix is ignored)."""
+        return sorted({
+            cip for soc in soc_codes for cip in self.career_fields.get(soc[:7], set())
+        })
 
     def _database(self) -> sqlite3.Connection:
         if self.connection is None:

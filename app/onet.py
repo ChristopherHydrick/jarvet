@@ -167,15 +167,18 @@ class OnetGraph:
         normalized = code.strip().upper()
         if not normalized:
             return []
-        rows = self.search_db.execute(
-            """SELECT DISTINCT onet_code, svc, moc_title, status FROM military_crosswalk
-               WHERE moc = ? ORDER BY status != 'A'""",
-            (normalized,),
-        ).fetchall()
+        rows = self._military_rows(normalized)
+        # A code's retired ("O") meanings can be a different job entirely --
+        # Army 91B is Wheeled Vehicle Mechanic today but was once Medical
+        # Specialist -- so they only count when no current meaning has an
+        # O*NET occupation.
+        occupations = {row[0]: self._occupation_row(row[0]) for row in rows}
+        if any(occupations[row[0]] and row[3] == "A" for row in rows):
+            rows = [row for row in rows if row[3] == "A"]
         results = []
         seen = set()
         for onet_code, svc, moc_title, status in rows:
-            occupation = self._occupation_row(onet_code)
+            occupation = occupations[onet_code]
             if occupation is None or occupation["code"] in seen:
                 continue
             seen.add(occupation["code"])
@@ -186,15 +189,104 @@ class OnetGraph:
             results.append(occupation)
         return results
 
+    def _military_rows(self, code: str) -> list[tuple[str, str, str, str]]:
+        rows = [
+            tuple(row) for row in self.search_db.execute(
+                """SELECT DISTINCT onet_code, svc, moc_title, status FROM military_crosswalk
+                   WHERE moc = ? ORDER BY status != 'A'""",
+                (code,),
+            )
+        ]
+        if rows or "X" not in code[1:]:
+            return rows
+        # Airmen write an AFSC with X for the skill level ("1D7X1"), while
+        # the crosswalk lists each level (1D711 Helper ... 1D771 Craftsman),
+        # sometimes with a shred letter (1D731A).
+        pattern = code[0] + code[1:].replace("X", "_")
+        return [
+            tuple(row) for row in self.search_db.execute(
+                """SELECT DISTINCT onet_code, svc, moc_title, status FROM military_crosswalk
+                   WHERE svc = 'F' AND (moc LIKE ? OR moc LIKE ?) ORDER BY status != 'A'""",
+                (pattern, pattern + "_"),
+            )
+        ]
+
+    def military_code_in(self, text: str) -> str | None:
+        """The first military job code in free text that the crosswalk
+        knows, e.g. "68W" in "I was a 68W, what schools...". An all-digit
+        code counts only as a four-digit Marine Corps MOS or Navy NEC (0311)
+        and not a year ("got out in 2019"), since "within 25 miles" or a ZIP
+        code would otherwise match some code in the crosswalk."""
+        for candidate in _military_code_candidates(text):
+            if candidate.isdigit() and (len(candidate) != 4 or candidate[:2] in ("19", "20")):
+                continue
+            if self._military_rows(candidate):
+                return candidate
+        return None
+
+    def military_careers(self, code: str) -> list[dict]:
+        """A military job code's civilian careers from the official crosswalk
+        -- current meanings only when it has any, since a retired meaning can
+        be an unrelated job (see military_lookup). Kept even without an O*NET
+        occupation, since the CIP-to-SOC crosswalk can still link the career
+        to fields of study."""
+        if self.search_db is None:
+            raise RuntimeError("O*NET search index has not been loaded.")
+        rows = self._military_rows(code.strip().upper())
+        if any(row[3] == "A" for row in rows):
+            rows = [row for row in rows if row[3] == "A"]
+        careers = []
+        seen = set()
+        for onet_code, svc, moc_title, status in rows:
+            # An AFSC's skill levels and shreds (1D711 ... 1D771A) repeat the
+            # same civilian career.
+            if onet_code in seen:
+                continue
+            seen.add(onet_code)
+            occupation = self._occupation_row(onet_code)
+            details = [
+                (row[0], row[1]) for row in self.search_db.execute(
+                    "SELECT code, title FROM occupation_search WHERE code LIKE ? AND code != ? ORDER BY code",
+                    (f"{onet_code[:7]}.%", onet_code),
+                )
+            ] if onet_code.endswith(".00") else []
+            careers.append({
+                "soc": onet_code, "military_title": moc_title,
+                "branch": MILITARY_BRANCH_LABELS.get(svc, svc), "active": status == "A",
+                "title": occupation["title"] if occupation else None,
+                # An "All Other" catch-all such as Army 25B's "Computer
+                # Occupations, All Other" (15-1299.00) has O*NET's specific
+                # jobs under it (15-1299.01 Web Administrators, .05
+                # Information Security Engineers, ...) and no related
+                # occupations of its own; its specific jobs' stand in.
+                "detail_codes": [code for code, _ in details],
+                "example_jobs": [title for _, title in details[:6]],
+            })
+        return careers
+
     def related_results(self, occupation: dict, limit: int = 8) -> list[dict]:
+        return [
+            result for code in self._related_codes(occupation["uri"], limit)
+            if (result := self.result_by_code(code))
+        ]
+
+    def related_codes(self, code: str, limit: int = 5) -> list[str]:
+        """O*NET's most closely related occupations for one occupation code,
+        closest first (the first five are O*NET's "Primary-Short" tier --
+        Paramedics -> EMTs, Registered Nurses, LPNs). Empty for a code with
+        no O*NET occupation of its own."""
+        occupation = self._occupation_row(code)
+        return self._related_codes(occupation["uri"], limit) if occupation else []
+
+    def _related_codes(self, uri: str, limit: int) -> list[str]:
         rows = self._query(f"""
             SELECT ?code WHERE {{
-              <{occupation['uri']}> onet:hasRelatedOccupation ?link .
+              <{uri}> onet:hasRelatedOccupation ?link .
               ?link onet:refersTo ?related ; onet:relatedIndex ?index .
               ?related onet:onetSOCCode ?code .
             }} ORDER BY ?index LIMIT {limit}
         """)
-        return [result for row in rows if (result := self.result_by_code(_text(row["code"])))]
+        return [_text(row["code"]) for row in rows]
 
     def _build_search_index(self, path: Path) -> None:
         documents: dict[str, dict[str, Any]] = {}

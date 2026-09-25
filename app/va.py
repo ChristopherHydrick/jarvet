@@ -1264,13 +1264,17 @@ class VaComparison:
         self, fields: dict[str, dict[str, Any]], *, exclude_facilities: set[str],
         state: str | None = None, latitude: float | None = None,
         longitude: float | None = None, max_miles: float | None = None, limit: int = 20,
+        min_score: dict[str, float] | None = None,
     ) -> list[dict[str, Any]]:
         """Approved programs whose field of study is one of fields (a CIP code
         -> {"title", "overlap", ...} map from IpedsIndex.related_fields), at
         schools not in exclude_facilities, within the same state/radius as
-        the main search. Closest (or most related) schools first."""
+        the main search. Closest (or most related) schools first. min_score
+        defaults to FIELD_MIN_SCORE; pass FIELD_EXACT_MIN_SCORE when the
+        results are presented as matches rather than as related."""
         if not fields or not self._has_program_fields():
             return []
+        min_score = min_score or self.FIELD_MIN_SCORE
         database = self._database()
         placeholders = ",".join("?" for _ in fields)
         rows = database.execute(
@@ -1281,7 +1285,7 @@ class VaComparison:
         by_distance = latitude is not None and longitude is not None
         grouped: dict[str, dict[str, Any]] = {}
         for facility_code, description, cip, score, method, program_type in rows:
-            if facility_code in exclude_facilities or score < self.FIELD_MIN_SCORE.get(method, 1):
+            if facility_code in exclude_facilities or score < min_score.get(method, 1):
                 continue
             if facility_code not in grouped:
                 facility_row = database.execute(
