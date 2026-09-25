@@ -153,6 +153,21 @@ CREDENTIAL_CONCEPTS: list[dict[str, Any]] = [
         "fts": '("nurs"* AND ("assist"* OR "aid"*)) OR "cna"*',
         "title": re.compile(r"\bcnas?\b|\bnurs\w*\s+(assist\w*|aides?)\b", re.I),
     },
+    # Electrician training is mostly titled by the trade's adjective --
+    # "ELECTRICAL TECHNOLOGY", "INDUSTRIAL ELECTRICITY", "CERT ELECTRICAL
+    # WIRING" -- so a Houston "electrician" search found no approved school at
+    # all by the word itself. Engineering, electronics and vehicle/medical
+    # "electric" titles are a different credential and stay out.
+    {
+        "query": re.compile(r"\belectricians?\b", re.I),
+        "fts": '"electr"*',
+        "title": re.compile(
+            r"^(?!.*\b(eng\w*|bse|bsee|ee|eet|electronic\w*|automotive|auto|vehicles?|vehical"
+            r"|media|computer|comp|hybrid|aircraft|avionics|biomedical|music|arc|weld\w*)\b)"
+            r".*\belectr(ic|ical|icians?|icity)?\b",
+            re.I,
+        ),
+    },
 ]
 FIELD_EXPANSION_FALSE_POSITIVE_MARKERS: dict[str, set[str]] = {
     "pilot": {"attendant", "engineering"},
