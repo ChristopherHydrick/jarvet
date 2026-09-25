@@ -307,6 +307,7 @@ async def chat(request: ChatRequest, response: Response):
         **turn,
         "resources": result["resources"],
         "matches": result["matches"][:3],
+        "pathway": result.get("pathway"),
         "selected_occupation": result["selected_occupation"],
     }
     return api_response

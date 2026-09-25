@@ -1260,6 +1260,25 @@ class VaComparison:
         # Installation and Repair made up 17% of a Phoenix HVAC search.
         return [cip for cip, count in ranked[:limit] if total and count / total >= 0.25]
 
+    def facility_programs_in_fields(
+        self, facility_codes: set[str], cips: set[str],
+    ) -> list[tuple[str, str, str, float, str, str]]:
+        """Every program at these schools in these fields, whatever its field
+        score, as (facility_code, description, cip, score, method,
+        program_type) -- for app/pathways.py, which applies its own cutoffs."""
+        if not facility_codes or not cips or not self._has_program_fields():
+            return []
+        facility_list, cip_list = sorted(facility_codes), sorted(cips)
+        return [
+            tuple(row) for row in self._database().execute(
+                "SELECT facility_code, description, cip, score, method, program_type "
+                "FROM va_program_fields WHERE facility_code IN "
+                f"({','.join('?' for _ in facility_list)}) AND cip IN "
+                f"({','.join('?' for _ in cip_list)})",
+                (*facility_list, *cip_list),
+            )
+        ]
+
     def programs_in_fields(
         self, fields: dict[str, dict[str, Any]], *, exclude_facilities: set[str],
         state: str | None = None, latitude: float | None = None,

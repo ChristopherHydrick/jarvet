@@ -156,7 +156,35 @@ def db_counts(va: VaComparison, tools: JarvetTools, check: dict) -> dict:
         "related": len(related),
         "exact_names": sorted(str(f["institution"]) for f in main),
         "related_names": sorted(str(f["institution"]) for f in related),
+        **pathway_counts(tools.pathway if name == "find_va_programs_for_military_job" else None),
     }
+
+
+def pathway_counts(pathway: dict | None) -> dict:
+    """Schools per step of the "Your path forward" ladder (app/pathways.py),
+    and every "School: PROGRAM" line in it."""
+    steps, programs = {}, set()
+    for step in (pathway or {}).get("steps", []):
+        schools = set()
+        for track in step["tracks"]:
+            for school in track["schools"]:
+                schools.add(school["institution"])
+                programs.update(f"{school['institution']}: {p['description']}" for p in school["programs"])
+        steps[step["level"]] = len(schools)
+    return {"pathway": steps, "pathway_programs": programs}
+
+
+def pathway_problems(check: dict, counts: dict) -> list[str]:
+    want = check.get("expect_pathway")
+    if want is None:
+        return []
+    problems = []
+    if want.get("steps") is not None and counts["pathway"] != want["steps"]:
+        problems.append(f"pathway steps {counts['pathway']} (expected {want['steps']})")
+    missing = [line for line in want.get("programs", []) if line not in counts["pathway_programs"]]
+    if missing:
+        problems.append("pathway missing: " + "; ".join(missing))
+    return problems
 
 
 def reply_counts(message: str) -> dict:
@@ -189,6 +217,7 @@ def app_counts(base_url: str, message: str, timeout: float) -> dict:
         provider = resource.get("provider") or {}
         (related if provider.get("related_fields") else exact).append(str(provider.get("institution")))
     return {
+        **pathway_counts(payload.get("pathway")),
         "cards": {"exact": len(exact), "related": len(related)},
         "reply": reply_counts(str(payload.get("message", ""))),
         "exact_names": sorted(exact),
@@ -236,10 +265,11 @@ def main() -> int:
         problems = [
             f"{kind} {counts[kind]} (expected {want})"
             for kind, want in check.get("expect", {}).items() if counts[kind] != want
-        ]
+        ] + pathway_problems(check, counts)
         status = "FAIL" if problems else "ok  "
         failures += bool(problems)
         print(f"{status}  {check['name']}: {counts['exact']} exact + {counts['related']} related"
+              + (f", path {'/'.join(str(n) for n in counts['pathway'].values())}" if counts["pathway"] else "")
               + (" -- " + ", ".join(problems) if problems else ""))
 
     if not args.db_only:
@@ -260,6 +290,8 @@ def main() -> int:
                 for kind in ("exact", "related"):
                     if got[source][kind] != want[kind]:
                         problems.append(f"{source} {kind} {got[source][kind]} (database {want[kind]})")
+            if got["pathway"] != want["pathway"]:
+                problems.append(f"pathway steps {got['pathway']} (database {want['pathway']})")
             for kind in ("exact", "related"):
                 diff = name_diff(want[f"{kind}_names"], got[f"{kind}_names"])
                 if diff:

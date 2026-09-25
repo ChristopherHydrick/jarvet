@@ -540,6 +540,134 @@ function renderResources(resources = []) {
   messagesElement.scrollTop = messagesElement.scrollHeight;
 }
 
+// "Your path forward" (app/pathways.py): a military-job search's programs by
+// credential level. Shown above the school cards; tapping a school scrolls to
+// its card. Only the first few career tracks per step and schools per track
+// show until expanded, since broad jobs (Army 25B) have a dozen tracks.
+const PATHWAY_TRACKS_SHOWN = 3;
+const PATHWAY_SCHOOLS_SHOWN = 5;
+const PATHWAY_TAG_TEXT = {
+  bridge: "Bridge: for people who already hold the earlier credential",
+  military: "Military track",
+  accelerated: "Accelerated",
+};
+
+function renderPathway(pathway) {
+  if (!pathway?.steps?.length) return;
+  const section = document.createElement("section");
+  section.className = "pathway";
+  const heading = document.createElement("h3");
+  heading.textContent = pathway.heading;
+  const intro = document.createElement("p");
+  intro.className = "pathway-intro";
+  intro.textContent = pathway.intro;
+  section.append(heading, intro);
+
+  const milesText = miles => Number.isFinite(miles) ? ` (${miles.toFixed(1)} mi)` : "";
+  const schoolButton = school => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "pathway-school";
+    button.textContent = school.institution;
+    button.title = "Show this school's card";
+    button.addEventListener("click", () => {
+      const card = [...document.querySelectorAll(".resource-group")].reverse().find(
+        group => group.querySelector("h3")?.textContent === school.institution
+      );
+      card?.scrollIntoView({ behavior: "smooth", block: "center" });
+      card?.classList.add("pathway-flash");
+      setTimeout(() => card?.classList.remove("pathway-flash"), 1600);
+    });
+    return button;
+  };
+
+  const trackElement = track => {
+    const element = document.createElement("div");
+    element.className = "pathway-track";
+    if (track.title) {
+      const title = document.createElement("h5");
+      title.textContent = `Leads to: ${track.title}`;
+      element.appendChild(title);
+    }
+    const list = document.createElement("ul");
+    track.schools.forEach((school, index) => {
+      const item = document.createElement("li");
+      if (index >= PATHWAY_SCHOOLS_SHOWN) item.hidden = true;
+      item.append(schoolButton(school), document.createTextNode(`${milesText(school.distance_miles)}: `));
+      school.programs.forEach((program, programIndex) => {
+        if (programIndex) item.appendChild(document.createTextNode("; "));
+        item.appendChild(document.createTextNode(program.description));
+        for (const tag of program.tags || []) {
+          const badge = document.createElement("span");
+          badge.className = `pathway-tag pathway-tag-${tag}`;
+          badge.textContent = PATHWAY_TAG_TEXT[tag] || tag;
+          item.appendChild(badge);
+        }
+      });
+      list.appendChild(item);
+    });
+    element.appendChild(list);
+    const hiddenSchools = track.schools.length - PATHWAY_SCHOOLS_SHOWN;
+    if (hiddenSchools > 0) {
+      const more = document.createElement("button");
+      more.type = "button";
+      more.className = "pathway-more";
+      more.textContent = `Show ${hiddenSchools} more school${hiddenSchools === 1 ? "" : "s"}`;
+      more.addEventListener("click", () => {
+        list.querySelectorAll("li[hidden]").forEach(item => { item.hidden = false; });
+        more.remove();
+      });
+      element.appendChild(more);
+    }
+    return element;
+  };
+
+  pathway.steps.forEach((step, index) => {
+    const stepElement = document.createElement("div");
+    stepElement.className = "pathway-step";
+    const title = document.createElement("h4");
+    title.textContent = `Step ${index + 1}: ${step.title}`;
+    const blurb = document.createElement("p");
+    blurb.className = "pathway-blurb";
+    blurb.textContent = step.blurb;
+    stepElement.append(title, blurb);
+    step.tracks.slice(0, PATHWAY_TRACKS_SHOWN).forEach(track => stepElement.appendChild(trackElement(track)));
+    const extra = step.tracks.slice(PATHWAY_TRACKS_SHOWN);
+    if (extra.length) {
+      const details = document.createElement("details");
+      const summary = document.createElement("summary");
+      summary.textContent = `${extra.length} more career path${extra.length === 1 ? "" : "s"} at this step`;
+      details.appendChild(summary);
+      extra.forEach(track => details.appendChild(trackElement(track)));
+      stepElement.appendChild(details);
+    }
+    section.appendChild(stepElement);
+  });
+
+  if (pathway.same_school?.length) {
+    const same = document.createElement("div");
+    same.className = "pathway-same-school";
+    const title = document.createElement("h4");
+    title.textContent = "Schools where you can take several steps without transferring";
+    const list = document.createElement("ul");
+    for (const school of pathway.same_school) {
+      const item = document.createElement("li");
+      item.append(
+        schoolButton(school),
+        document.createTextNode(`${milesText(school.distance_miles)}: ${school.levels.join(" → ")}`),
+      );
+      list.appendChild(item);
+    }
+    same.append(title, list);
+    section.appendChild(same);
+  }
+  const advice = document.createElement("p");
+  advice.className = "pathway-advice";
+  advice.textContent = pathway.advice;
+  section.appendChild(advice);
+  messagesElement.appendChild(section);
+}
+
 function renderProfile() {
   profileItems.replaceChildren();
   if (selectedOccupation) {
@@ -725,6 +853,7 @@ async function submitMessage(rawContent) {
     thinking.remove();
     messages.push({ role: "assistant", content: body.message });
     addMessage("assistant", body.message, "", body.resources || []);
+    renderPathway(body.pathway);
     renderResources(body.resources);
     profile = body.profile || profile;
     selectedOccupation = body.selected_occupation || selectedOccupation;

@@ -11,6 +11,7 @@ import httpx
 
 from app.ipeds import IpedsIndex
 from app.onet import OnetGraph
+from app.pathways import build_pathway, summary_for_model
 from app.programs import discover_admissions_page
 from app.va import VaComparison
 
@@ -32,6 +33,10 @@ AFSC_SKILL_LEVEL = re.compile(r"\s+(Helper|Apprentice|Journeyman|Craftsman|Super
 # call to enrich its card, and past this many the section stops advising and
 # starts burying the exact matches.
 RELATED_FACILITY_LIMIT = 15
+# The "Your path forward" ladder keeps a program scoring this low against
+# its field only when the same school has a confident program on the same
+# track (see app/pathways.py build_pathway).
+PATHWAY_SAME_SCHOOL_MIN_SCORE = 0.65
 
 # The system prompt already tells the model to call find_va_programs directly
 # for a named-program/trade search, skipping search_occupations/get_occupation
@@ -290,6 +295,9 @@ class JarvetTools:
         # The schools the latest find_va_programs call returned, for
         # arrange_listings() -- see there.
         self.listed_facilities: dict[str, list[dict[str, Any]]] = {}
+        # "Your path forward" section from the latest military-job search,
+        # which the page renders above the cards (app/pathways.py).
+        self.pathway: dict[str, Any] | None = None
 
     def _add_resource(self, resource: dict[str, Any]) -> None:
         # VA's insturl / vet_tuition_policy_url fields are often stored
@@ -328,12 +336,10 @@ class JarvetTools:
             longitude=longitude, max_miles=max_miles,
         )
 
-    def _military_related_programs(
-        self, careers: list[dict[str, Any]], main_fields: set[str], main_facilities: set[str], *,
-        state: str | None, latitude: float | None, longitude: float | None,
-        max_miles: float | None,
-    ) -> list[dict[str, Any]]:
-        """Related section for a military-job search: lower-confidence
+    def _military_fields(
+        self, careers: list[dict[str, Any]], main_fields: set[str],
+    ) -> dict[str, dict[str, Any]]:
+        """Fields for the related section of a military-job search: lower-confidence
         programs in the job's own fields, plus fields for O*NET's closest
         related civilian careers -- the crosswalk links Army 68W (Combat
         Medic) only to Paramedics, while O*NET relates Paramedics to EMTs,
@@ -374,9 +380,48 @@ class JarvetTools:
                 entry["overlap"] = max(entry["overlap"], 0.9 - 0.1 * rank)
                 if related[:7] not in entry["shared_careers"]:
                     entry["shared_careers"].append(related[:7])
-        return self._related_facilities(
-            fields, main_facilities, state=state, latitude=latitude,
-            longitude=longitude, max_miles=max_miles,
+        return fields
+
+    def _military_pathway(
+        self, military_job: dict[str, Any], careers: list[dict[str, Any]],
+        fields: dict[str, dict[str, Any]], facilities: list[dict[str, Any]],
+        location_label: str | None,
+    ) -> dict[str, Any] | None:
+        """The "Your path forward" ladder (app/pathways.py) over the schools
+        the cards show, grouped by the careers each field leads to."""
+        # Each career ranks by its closest field: the job's own careers
+        # (overlap 1.0) first, then O*NET's related careers in their order.
+        priority = {career["soc"][:7]: 1.0 for career in careers}
+        for entry in fields.values():
+            for soc in entry.get("shared_careers") or []:
+                priority[soc] = max(priority.get(soc, 0.0), entry.get("overlap", 0.0))
+        relevant = set(priority)
+        track_careers = {}
+        for cip in fields:
+            linked = self.ipeds.field_careers.get(cip, set()) & relevant
+            if not linked:
+                # Catch-all careers ("Computer Occupations, All Other") are
+                # left out of field_careers but still link their fields.
+                linked = {
+                    soc for soc in relevant if cip in self.ipeds.career_fields.get(soc, set())
+                }
+            track_careers[cip] = sorted(linked, key=lambda soc: (-priority[soc], soc))
+        career_titles = {
+            soc: title for soc in relevant if (title := self.onet.occupation_title(soc))
+        }
+        job_title = (military_job.get("titles") or [""])[0]
+        return build_pathway(
+            self.va.facility_programs_in_fields(
+                {facility["facility_code"] for facility in facilities}, set(fields),
+            ),
+            facilities,
+            track_careers=track_careers, career_titles=career_titles,
+            primary_careers={career["soc"][:7] for career in careers},
+            min_score=self.va.FIELD_MIN_SCORE,
+            same_school_min_score=PATHWAY_SAME_SCHOOL_MIN_SCORE,
+            heading=f"Your path forward from {military_job['code']}"
+            + (f" {job_title}" if job_title else ""),
+            location_label=location_label,
         )
 
     def _related_facilities(
@@ -932,6 +977,7 @@ class JarvetTools:
             return await self._search_programs(arguments, search, tool_name="find_va_programs")
 
         if name == "find_va_programs_for_military_job":
+            self.pathway = None
             code = str(arguments.get("military_code", "")).strip().upper()
             careers = self.onet.military_careers(code) if code else []
             if not careers:
@@ -1002,14 +1048,32 @@ class JarvetTools:
                         "approved program catalog"
                     ),
                 }
-                related = (
-                    self._military_related_programs(
-                        careers, set(fields), {item["facility_code"] for item in matches},
+                related: list[dict[str, Any]] = []
+                if scope["offset"] == 0:
+                    related_fields = self._military_fields(careers, set(fields))
+                    related = self._related_facilities(
+                        related_fields, {item["facility_code"] for item in matches},
                         state=scope["state"], latitude=scope["latitude"],
                         longitude=scope["longitude"], max_miles=scope["max_miles"],
                     )
-                    if scope["offset"] == 0 else []
-                )
+                    self.pathway = self._military_pathway(
+                        military_job, careers, related_fields, page + related,
+                        self.resolved_location["label"] if scope["latitude"] is not None
+                        and self.resolved_location else None,
+                    )
+                    if self.pathway:
+                        result["pathway"] = {
+                            **summary_for_model(self.pathway),
+                            "note": (
+                                "The page shows a 'Your path forward' section on its own, "
+                                "arranging these schools' programs by level (certificate, "
+                                "associate, bachelor's, graduate). After LIST 2, add one short "
+                                "plain sentence pointing to it (for example 'Below, Your path "
+                                "forward shows how these programs build on each other, from a "
+                                "certificate up to a bachelor's degree.'). Never list its "
+                                "schools or steps again in your reply."
+                            ),
+                        }
                 return result, related
 
             return await self._search_programs(
@@ -1379,6 +1443,7 @@ Preserve valid profile facts, update direct user corrections, and do not infer s
                     "resolved_location": tools.resolved_location,
                     "location_candidates": tools.location_candidates,
                     "listed_facilities": tools.listed_facilities,
+                    "pathway": tools.pathway,
                 }
             for tool_call in tool_calls:
                 function = tool_call.get("function", {})
@@ -1417,4 +1482,5 @@ Preserve valid profile facts, update direct user corrections, and do not infer s
             "resolved_location": tools.resolved_location,
             "location_candidates": tools.location_candidates,
             "listed_facilities": tools.listed_facilities,
+            "pathway": tools.pathway,
         }

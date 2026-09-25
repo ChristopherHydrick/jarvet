@@ -94,6 +94,24 @@ main { min-height: 100dvh; position: relative; }
 .related-heading { grid-column: 1 / -1; margin-top: 8px; padding-top: 14px; border-top: 1px solid var(--line); }
 .related-heading h3 { margin: 0 0 4px; font-size: 14px; }
 .related-heading p { margin: 0; color: var(--muted); font-size: 12px; }
+.pathway { max-width: 85%; margin: 0 0 22px; padding: 16px 18px; border: 1px solid #b3a570; border-left: 4px solid var(--leaf); border-radius: 6px; background: var(--panel); animation: arrive .3s ease both; }
+.pathway h3 { margin: 0 0 4px; font-size: 16px; }
+.pathway-intro, .pathway-blurb, .pathway-advice { margin: 0 0 10px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.pathway-step { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.pathway-step h4, .pathway-same-school h4 { margin: 0 0 2px; font-size: 14px; }
+.pathway-track { margin: 6px 0 8px; }
+.pathway-track h5 { margin: 0 0 3px; color: var(--leaf); font-size: 12px; }
+.pathway ul { margin: 0; padding-left: 18px; font-size: 12px; line-height: 1.5; }
+.pathway-school { padding: 0; border: 0; color: var(--ink); background: none; font: 600 12px "IBM Plex Sans"; text-decoration: underline dotted; text-underline-offset: 2px; cursor: pointer; }
+.pathway-school:hover { color: var(--accent); }
+.pathway-tag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 3px; background: var(--accent-soft); color: var(--accent); font-size: 10px; font-weight: 600; }
+.pathway-tag-military { background: var(--leaf); color: white; }
+.pathway-more, .pathway summary { margin: 3px 0 0 18px; padding: 0; border: 0; color: var(--accent); background: none; font: 600 11px "IBM Plex Sans"; cursor: pointer; }
+.pathway details { margin-top: 4px; }
+.pathway-same-school { margin-top: 12px; padding: 10px 12px; border-radius: 4px; background: var(--accent-soft); }
+.pathway-advice { margin: 12px 0 0; font-style: italic; }
+.resource-group.pathway-flash { outline: 3px solid var(--leaf); outline-offset: 2px; }
+@media (max-width: 700px) { .pathway { max-width: 100%; } }
 .related-reason { margin: 8px 0 0; padding: 6px 8px; border-left: 3px solid var(--accent); background: var(--accent-soft); font-size: 11px; line-height: 1.35; }
 .resource-heading { min-height: 28px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
 .resource-group h3 { margin: 0 0 9px; font-size: 13px; line-height: 1.3; }
