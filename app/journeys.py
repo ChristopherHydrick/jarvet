@@ -383,7 +383,12 @@ def compose_other_ways(answers: dict[str, str]) -> tuple[str, str | None]:
         "the official sources."
     )
     if _in_person(answers) and answers.get("field") not in ("explore", SKIP, UNSURE, None):
-        request += f"\nAlso find 3 to 5 VA-approved programs {_field_phrase(answers)} {_place_phrase(answers)}."
+        request += (
+            f"\nAlso show me 3 to 5 schools {_field_phrase(answers)} {_place_phrase(answers)}. I may not have "
+            "VA benefits, so don't present them as VA-approved programs -- present them as places to train, and "
+            "tell me to contact their financial aid office and veterans office to ask about funding "
+            "(FAFSA/Pell, state aid, school scholarships)."
+        )
     return request, "find_help_without_va_benefits" if has_state else None
 
 
