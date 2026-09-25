@@ -1,36 +1,10 @@
 [
-  {
-    "name": "CNA in California",
-    "program": "CNA", "state": "CA",
-    "message": "Show me all CNA programs in California",
-    "expect": {"exact": 28, "related": 8}
-  },
-  {
-    "name": "Nurse aide in California (same schools as CNA)",
-    "program": "nurse aide", "state": "CA",
-    "expect": {"exact": 28}
-  },
-  {
-    "name": "Nursing assistant in California (same schools as CNA)",
-    "program": "nursing assistant", "state": "CA",
-    "expect": {"exact": 28}
-  },
-  {
-    "name": "Data within 20 miles of Redwood City",
-    "program": "data", "location": "Redwood City, CA", "radius": 20,
-    "message": "Find data programs within 20 miles of Redwood City, CA",
-    "expect": {"exact": 19, "related": 9}
-  },
-  {
-    "name": "Cybersecurity within 20 miles of San Antonio",
-    "program": "cybersecurity", "location": "San Antonio, TX", "radius": 20,
-    "message": "Find cybersecurity programs within 20 miles of San Antonio, TX",
-    "expect": {"exact": 15, "related": 4}
-  },
-  {
-    "name": "Welding within 25 miles of Redwood City",
-    "program": "welding", "location": "Redwood City, CA", "radius": 25,
-    "message": "Find welding programs within 25 miles of Redwood City, CA",
-    "expect": {"exact": 4, "related": 0}
-  }
+  {"name": "CNA in California", "program": "CNA", "state": "CA", "message": "Show me all CNA programs in California", "expect": {"exact": 28, "related": 8}},
+  {"name": "Nurse aide in California (same schools as CNA)", "program": "nurse aide", "state": "CA", "expect": {"exact": 28}},
+  {"name": "Nursing assistant in California (same schools as CNA)", "program": "nursing assistant", "state": "CA", "expect": {"exact": 28}},
+  {"name": "Data within 20 miles of Redwood City", "program": "data", "location": "Redwood City, CA", "radius": 20, "message": "Find data programs within 20 miles of Redwood City, CA", "expect": {"exact": 19, "related": 9}},
+  {"name": "Cybersecurity within 20 miles of San Antonio", "program": "cybersecurity", "location": "San Antonio, TX", "radius": 20, "message": "Find cybersecurity programs within 20 miles of San Antonio, TX", "expect": {"exact": 18, "related": 1}},
+  {"name": "Welding within 25 miles of Redwood City", "program": "welding", "location": "Redwood City, CA", "radius": 25, "message": "Find welding programs within 25 miles of Redwood City, CA", "expect": {"exact": 4, "related": 0}},
+  {"name": "Medical assistant within 20 miles of San Diego", "program": "medical assistant", "location": "San Diego, CA", "radius": 20, "message": "Find medical assistant programs within 20 miles of San Diego, CA", "expect": {"exact": 7, "related": 0}},
+  {"name": "Paralegal within 20 miles of Chicago", "program": "paralegal", "location": "Chicago, IL", "radius": 20, "message": "Find paralegal programs within 20 miles of Chicago, IL", "expect": {"exact": 15, "related": 0}}
 ]

@@ -1118,10 +1118,44 @@ class VaComparison:
                 return sorted(grouped.values(), key=lambda item: (item["distance"], -item["best_score"]))
             return sorted(grouped.values(), key=lambda item: -item["best_score"])
 
+        def _with_field_matches(
+            ordered: list[dict[str, Any]], fields: list[str],
+        ) -> list[dict[str, Any]]:
+            """Add schools whose program sits confidently in the same field of
+            study as the word matches but is titled differently -- "CYBER
+            SECURITY" for a "cybersecurity" search, "MEDICAL ASSISTING" for
+            "medical assistant". Ranked with the word matches (by distance
+            when there is a location, after them otherwise)."""
+            matched = {item["facility"]["facility_code"] for item in ordered}
+            placeholders = ",".join("?" for _ in fields)
+            rows = [
+                (facility_code, program_type, description, 0.0)
+                for facility_code, program_type, description, score, method in database.execute(
+                    "SELECT facility_code, program_type, description, score, method "
+                    f"FROM va_program_fields WHERE cip IN ({placeholders})",
+                    tuple(fields),
+                )
+                if facility_code not in matched
+                and score is not None
+                and score >= self.FIELD_EXACT_MIN_SCORE.get(method, 1)
+                and (facility_code, description) not in KNOWN_FALSE_POSITIVE_PROGRAMS
+            ]
+            added = _group(rows, require_all=True)
+            if not added:
+                return ordered
+            for item in added:
+                item["facility"]["match_type"] = "field"
+            if by_distance:
+                return sorted(ordered + added, key=lambda item: (item["distance"], item["best_rank"]))
+            return ordered + added
+
         concept = next(
             (item for item in CREDENTIAL_CONCEPTS if item["query"].search(keyword)), None,
         )
         ordered = _pipeline(require_all=True, concept=concept)
+        # Only a strict (every-word) match is trusted to define the field; the
+        # any-word and meaning-based fallbacks below are too loose for that.
+        strict_match = bool(ordered)
         # A plain-English multi-word trade query (e.g. "auto mechanic") can
         # legitimately return nothing near the searched location under a
         # strict all-terms-required search, because VA program titles often
@@ -1136,6 +1170,12 @@ class VaComparison:
             ordered = _pipeline(require_all=False)
         if not ordered:
             ordered = _semantic_pipeline()
+        matched_fields = self._dominant_fields([
+            (item["facility"]["facility_code"], program["description"])
+            for item in ordered for program in item["matching_programs"]
+        ])
+        if strict_match and matched_fields:
+            ordered = _with_field_matches(ordered, matched_fields)
         results = [
             {
                 **item["facility"],
@@ -1153,13 +1193,10 @@ class VaComparison:
             "source": "VA GI Bill Comparison Tool approved program catalog",
             # Internal, for the related-programs step in app/agent.py (which
             # pops both before the result reaches the model): every matched
-            # school across all pages, and the fields of study the matches
-            # themselves belong to.
+            # school across all pages, and the fields of study the word
+            # matches themselves belong to.
             "_matched_facility_codes": [item["facility"]["facility_code"] for item in ordered],
-            "_matched_fields": self._dominant_fields([
-                (item["facility"]["facility_code"], program["description"])
-                for item in ordered for program in item["matching_programs"]
-            ]),
+            "_matched_fields": matched_fields,
         }
 
     # A program title's field of study (scripts/init-va-program-fields.py)
@@ -1172,6 +1209,13 @@ class VaComparison:
     # ASSISTANT" through as Medical/Clinical Assistant. About 70% of programs
     # clear these.
     FIELD_MIN_SCORE = {"school": 0.75, "global": 0.78, "rule": 0.0}
+    # Stricter bar for a field match to count as an exact search result
+    # rather than a "related" one: at 0.78 Palo Verde College's "AS NURSING -
+    # RN" was filed as Nursing Assistant and Dominican University's "BA
+    # Educational Studies" as Legal Studies; San Diego Mesa's genuine
+    # "MEDICAL ASSISTING" scores 0.848. Lower-scoring matches still reach the
+    # related section through FIELD_MIN_SCORE.
+    FIELD_EXACT_MIN_SCORE = {"school": 0.84, "global": 0.84, "rule": 0.0}
 
     def _has_program_fields(self) -> bool:
         return self._database().execute(
