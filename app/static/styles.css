@@ -208,3 +208,10 @@ textarea { resize: none; border: 0; outline: 0; padding: 10px; color: var(--ink)
 .message.assistant a:hover {
   color: #0c4a6e;
 }
+.safety-panel { margin: 10px 0 4px; padding: 12px 14px; border: 2px solid #b3261e; border-radius: 6px; background: #fdecea; color: #3b0d0a; }
+.safety-panel.safety-housing { border-color: #1f5f8a; background: #e8f1f8; color: #0d2a3b; }
+.safety-panel h3 { margin: 0 0 8px; font-size: 15px; }
+.safety-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.safety-actions a { padding: 9px 14px; border-radius: 4px; background: #b3261e; color: #fff; font-weight: 600; text-decoration: none; }
+.safety-housing .safety-actions a { background: #1f5f8a; }
+.safety-actions a:hover, .safety-actions a:focus-visible { filter: brightness(1.12); outline: 2px solid currentColor; outline-offset: 2px; }

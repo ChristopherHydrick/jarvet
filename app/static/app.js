@@ -540,6 +540,33 @@ function renderResources(resources = []) {
   messagesElement.scrollTop = messagesElement.scrollHeight;
 }
 
+// Crisis / housing help lines (app/safety.py): big call, chat and text
+// buttons shown above the reply whenever the server's safety check fires.
+function renderSafety(notices = []) {
+  for (const notice of notices) {
+    const panel = document.createElement("section");
+    panel.className = `safety-panel safety-${notice.kind}`;
+    panel.setAttribute("role", "alert");
+    const title = document.createElement("h3");
+    title.textContent = notice.title;
+    panel.appendChild(title);
+    const actions = document.createElement("div");
+    actions.className = "safety-actions";
+    for (const action of notice.actions || []) {
+      const link = document.createElement("a");
+      link.href = action.url;
+      if (action.url.startsWith("http")) {
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+      }
+      link.textContent = action.label;
+      actions.appendChild(link);
+    }
+    panel.appendChild(actions);
+    messagesElement.appendChild(panel);
+  }
+}
+
 // "Your path forward" (app/pathways.py): a military-job search's programs by
 // credential level. Shown above the school cards; tapping a school scrolls to
 // its card. Only the first few career tracks per step and schools per track
@@ -852,6 +879,7 @@ async function submitMessage(rawContent) {
     stopThinkingStatuses();
     thinking.remove();
     messages.push({ role: "assistant", content: body.message });
+    renderSafety(body.safety);
     addMessage("assistant", body.message, "", body.resources || []);
     renderPathway(body.pathway);
     renderResources(body.resources);

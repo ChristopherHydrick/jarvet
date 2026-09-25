@@ -1336,7 +1336,7 @@ async def run_agent(
     selected_occupation: dict[str, str] | None, saved_providers: list[dict[str, str]],
     onet: OnetGraph, va: VaComparison, ipeds: IpedsIndex,
     official_resources: dict[str, dict[str, str]],
-    base_url: str, api_key: str, model: str,
+    base_url: str, api_key: str, model: str, safety_notes: list[str] | None = None,
 ) -> dict[str, Any]:
     provider_context = " ".join([
         messages[-1]["content"] if messages else "",
@@ -1351,6 +1351,7 @@ async def run_agent(
     system = f"""You are Jarvet, an agentic education and career facilitator for veterans. Solve the user's actual problem by deciding which tools to call, inspecting their results, and adapting your next step. Do not follow a fixed questionnaire.
 
 Operating principles:
+- Safety comes before everything else. If the user mentions suicide, self-harm, or wanting to die, however indirectly, begin your reply with the Veterans Crisis Line: dial 988 then press 1, chat live at veteranscrisisline.net, or text 838255 (free, confidential, 24/7; 911 if in immediate danger). If they are homeless or about to lose their housing, begin with the National Call Center for Homeless Veterans, 877-424-3838 (free, 24/7). Then respond to the person with warmth before anything else.
 - Use tools for every factual claim about occupations, programs, providers, geography, VA approval, and benefits. Never invent results.
 - When a tool result includes an exact total count (total_facilities, total_programs), open with that exact number ("Found 25 VA-approved diver programs") instead of a vague quantifier like several, many, or multiple. The count is precisely known from structured data; state it precisely.
 - Preserve the current selected occupation unless the user clearly changes career goals. If they do, search and then call get_occupation for the best supported match.
@@ -1402,6 +1403,8 @@ limit a search or answer to saved providers unless the user explicitly asks you 
 Return the final answer as one JSON object only:
 {{"message":"plain text","suggestions":[{{"label":"short direct answer or next action","value":"complete message sent when chosen"}}],"profile":{{"interests":[],"strengths":[],"goals":[],"preferences":[],"constraints":[],"education":[],"location":[],"notes":[]}}}}
 Preserve valid profile facts, update direct user corrections, and do not infer sensitive traits."""
+    if safety_notes:
+        system += "\n\n" + "\n".join(safety_notes)
     conversation: list[dict[str, Any]] = [{"role": "system", "content": system}, *messages[-16:]]
     headers = {"Authorization": f"Bearer {api_key}"}
     endpoint = f"{base_url.rstrip('/')}/chat/completions"

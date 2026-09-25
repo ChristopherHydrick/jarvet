@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from app import safety
 from app.agent import arrange_listings, run_agent
 from app.cache import ResponseCache
 from app.ipeds import IpedsIndex
@@ -251,6 +252,20 @@ def health():
     }
 
 
+def safety_only_reply(profile: dict[str, list[str]], concerns: list[str]) -> dict[str, Any]:
+    """The fixed crisis/housing reply on its own, for when the model cannot answer."""
+    return {
+        "message": safety.prefix(concerns),
+        "suggestions": complete_suggestions([], "", profile),
+        "profile": profile,
+        "safety": safety.notices(concerns),
+        "resources": [],
+        "matches": [],
+        "pathway": None,
+        "selected_occupation": None,
+    }
+
+
 @app.post("/api/chat")
 async def chat(request: ChatRequest, response: Response):
     profile = clean_profile(request.profile, {})
@@ -261,7 +276,12 @@ async def chat(request: ChatRequest, response: Response):
     # answer would otherwise get frozen under its exact request key and keep
     # being served indefinitely for that same query, masking real fixes.
     response.headers["X-Jarvet-Cache"] = "DISABLED"
+    # Checked before the model runs so the crisis/housing help lines still
+    # reach the veteran if the model is unconfigured or fails (app/safety.py).
+    concerns = safety.check(request.messages[-1].content)
     if not api_key:
+        if concerns:
+            return safety_only_reply(profile, concerns)
         raise HTTPException(503, "LLM_API_KEY is not configured in the container environment.")
     try:
         result = await run_agent(
@@ -276,8 +296,11 @@ async def chat(request: ChatRequest, response: Response):
             base_url=base_url,
             api_key=api_key,
             model=model,
+            safety_notes=[safety.MODEL_NOTES[concern] for concern in concerns],
         )
     except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as error:
+        if concerns:
+            return safety_only_reply(profile, concerns)
         raise HTTPException(502, f"The language model agent failed: {error}") from error
 
     turn = parse_turn(result["content"], profile)
@@ -303,8 +326,11 @@ async def chat(request: ChatRequest, response: Response):
             if re.sub(r"[^a-z0-9]+", " ", value.lower()).strip() != normalized_label
         ]
         turn["profile"]["location"].append(location["label"])
+    if concerns:
+        turn["message"] = f"{safety.prefix(concerns)}\n\n{turn['message']}".strip()
     api_response = {
         **turn,
+        "safety": safety.notices(concerns),
         "resources": result["resources"],
         "matches": result["matches"][:3],
         "pathway": result.get("pathway"),
