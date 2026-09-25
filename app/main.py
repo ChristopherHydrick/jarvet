@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from app.agent import run_agent
+from app.agent import arrange_listings, run_agent
 from app.cache import ResponseCache
 from app.ipeds import IpedsIndex
 from app.onet import OnetGraph
@@ -230,7 +230,12 @@ def retain_explicit_context(
 
 @app.get("/")
 def home():
-    return FileResponse(ROOT / "app" / "static" / "index.html")
+    # no-cache makes browsers revalidate the page itself, so a bumped
+    # ?v=N on app.js/styles.css reaches them instead of a stale cached copy
+    # that still points at the old asset version.
+    return FileResponse(
+        ROOT / "app" / "static" / "index.html", headers={"Cache-Control": "no-cache"},
+    )
 
 
 @app.get("/api/health")
@@ -276,6 +281,7 @@ async def chat(request: ChatRequest, response: Response):
         raise HTTPException(502, f"The language model agent failed: {error}") from error
 
     turn = parse_turn(result["content"], profile)
+    turn["message"] = arrange_listings(turn["message"], result.get("listed_facilities") or {})
     turn["profile"] = retain_explicit_context(
         profile, turn["profile"], request.messages[-1].content,
     )

@@ -47,6 +47,13 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
         "CREATE TABLE IF NOT EXISTS va_apply_path_guess_attempts ("
         "facility_code TEXT PRIMARY KEY, website TEXT NOT NULL, fetched_at INTEGER NOT NULL)"
     )
+    # See the matching comment in init-va-admissions-guesses.py: this script's
+    # query also LEFT JOINs va_website_guesses, which may not exist if
+    # init-va-website-guesses.py was never run (no SERPER_API_KEY available).
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS va_website_guesses ("
+        "facility_code TEXT PRIMARY KEY, url TEXT NOT NULL, fetched_at INTEGER NOT NULL)"
+    )
     connection.commit()
 
 

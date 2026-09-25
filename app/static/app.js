@@ -88,6 +88,7 @@ const startingPoints = [
   {
     title: "Career ideas",
     options: [
+      "Find degrees for high-demand jobs related to my MOS",
       "I want an A+ computer technician certificate",
       "I want to be an underwater welder",
     ],
@@ -146,6 +147,13 @@ const missionOpeners = {
       "Do I qualify for Chapter 35?",
       "Find state tuition waivers",
       "Tell me about the Fry Scholarship",
+    ],
+  },
+  "Find degrees for high-demand jobs related to my MOS.": {
+    message: "What's your military job code -- Army MOS, Air Force AFSC, Navy rating/NEC, Marine Corps MOS, or Space Force code (for example 25U or 0311)?\n\nI'll match it to civilian careers O*NET projects will grow quickly or add a lot of openings, then find degree or certificate programs for them.",
+    suggestions: [
+      "I don't know my code",
+      "Search by interest instead",
     ],
   },
 };
@@ -311,6 +319,10 @@ function renderResources(resources = []) {
     const glance = document.createElement("p");
     glance.className = "provider-glance";
     const glanceParts = [];
+    // Only set when the search was measured from a city/ZIP.
+    if (typeof provider.distance_miles === "number") {
+      glanceParts.push(`${provider.distance_miles.toFixed(1)} miles away`);
+    }
     if (provider.accredited) glanceParts.push("Accredited");
     if (provider.caution_flag) glanceParts.push("⚠ Caution flag");
     glance.textContent = glanceParts.join(" · ");
@@ -352,6 +364,35 @@ function renderResources(resources = []) {
       contactValue.textContent = `${provider.contact.name}${provider.contact.title ? ` · ${provider.contact.title}` : ""}`;
       contact.append(contactLabel, contactValue);
       details.appendChild(contact);
+    }
+
+    // A complete list can run to hundreds of programs (USC has ~977), so
+    // give long lists a type-to-filter box instead of endless scrolling.
+    const shownProgramCount = (provider.program_summaries || [])
+      .reduce((sum, summaryData) => sum + (summaryData.programs?.length || 0), 0);
+    if (shownProgramCount > 30) {
+      const filter = document.createElement("input");
+      filter.type = "search";
+      filter.className = "program-filter";
+      filter.placeholder = `Filter ${shownProgramCount} programs (for example: nursing, MBA, online)`;
+      filter.setAttribute("aria-label", "Filter this school's programs");
+      const filterStatus = document.createElement("p");
+      filterStatus.className = "program-filter-status";
+      filter.addEventListener("input", () => {
+        // Trim common endings so "nursing" also finds "NURSE ANESTHESIOLOGY"
+        // and "engineers" finds "ENGINEERING".
+        const words = filter.value.toLowerCase().split(/\s+/).filter(Boolean)
+          .map(word => word.length > 5 ? word.replace(/(ing|ers|er|es|s)$/, "") : word);
+        let visible = 0;
+        for (const item of details.querySelectorAll(".program-summary li")) {
+          const text = item.textContent.toLowerCase();
+          const show = words.every(word => text.includes(word));
+          item.hidden = !show;
+          if (show) visible += 1;
+        }
+        filterStatus.textContent = words.length ? `${visible} of ${shownProgramCount} programs match` : "";
+      });
+      details.append(filter, filterStatus);
     }
 
     for (const summaryData of provider.program_summaries || []) {
@@ -437,10 +478,20 @@ function renderResources(resources = []) {
     group.appendChild(details);
   };
 
+  let relatedHeadingShown = false;
   for (const [name, groupedResources] of groups) {
     const group = document.createElement("section");
     group.className = "resource-group";
     const provider = groupedResources.find(resource => resource.provider)?.provider;
+    // Related-field schools arrive after the exact matches (app/agent.py
+    // _related_programs); one heading separates the two.
+    if (provider?.related_fields?.length && !relatedHeadingShown) {
+      relatedHeadingShown = true;
+      const relatedHeading = document.createElement("div");
+      relatedHeading.className = "related-heading";
+      relatedHeading.innerHTML = "<h3>Related programs</h3><p>Programs in closely related fields that lead to similar jobs.</p>";
+      list.appendChild(relatedHeading);
+    }
     const heading = document.createElement("div");
     heading.className = "resource-heading";
     const title = document.createElement("h3");
@@ -459,6 +510,15 @@ function renderResources(resources = []) {
     actions.className = "resource-actions";
     for (const resource of groupedResources) appendLink(actions, resource);
     group.appendChild(actions);
+    if (provider?.related_fields?.length) {
+      const reason = document.createElement("p");
+      reason.className = "related-reason";
+      const careers = provider.related_careers?.length
+        ? ` · Leads to jobs like ${provider.related_careers.join(", ")}`
+        : "";
+      reason.textContent = `Related field: ${provider.related_fields.join(", ")}${careers}`;
+      group.appendChild(reason);
+    }
     if (provider) appendProviderDetails(group, provider);
     list.appendChild(group);
   }
@@ -570,6 +630,12 @@ function beginWithMission(content) {
   begin(opener);
 }
 
+welcomeInput.addEventListener("keydown", event => {
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    welcomeForm.requestSubmit();
+  }
+});
 welcomeForm.addEventListener("submit", event => {
   event.preventDefault();
   const content = welcomeInput.value.trim();

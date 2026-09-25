@@ -49,6 +49,17 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
         "CREATE TABLE IF NOT EXISTS va_admissions_guess_attempts ("
         "facility_code TEXT PRIMARY KEY, website TEXT NOT NULL, fetched_at INTEGER NOT NULL)"
     )
+    # The query below LEFT JOINs va_website_guesses (owned by
+    # init-va-website-guesses.py) to also cover schools with a Serper-guessed
+    # website, not just a VA-confirmed one -- but that script may never have
+    # been run (for example, no SERPER_API_KEY available), in which case the
+    # table wouldn't exist yet and the join would fail outright rather than
+    # just finding no matches. Ensure it exists, empty, so this script can
+    # still cover every school with a VA-confirmed website on its own.
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS va_website_guesses ("
+        "facility_code TEXT PRIMARY KEY, url TEXT NOT NULL, fetched_at INTEGER NOT NULL)"
+    )
     connection.commit()
 
 

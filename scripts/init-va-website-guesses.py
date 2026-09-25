@@ -72,7 +72,16 @@ BLOCKED_HOST_PATTERNS = re.compile(
     # State-government "manual"/almanac reference pages (e.g. Maryland's
     # msa.maryland.gov directory) describe an institution but aren't its own
     # site.
-    r"manual",
+    r"manual|"
+    # Multi-school directory/aggregator sites, named as a trade or category
+    # word (school(s), college, beauty, massage, cdl, trade...) glued to an
+    # aggregator-ish suffix (directory, finder, near(me), now, usa, guide,
+    # authority...). These routinely share one category word with a real
+    # institution in that trade without being that institution's own site --
+    # this is what let beautyschoolsdirectory.com and massagetherapylicense.org
+    # outrank real schools' sites earlier in this same batch run.
+    r"schools?directory|schools?finder|schools?near|school(s)?now|schoolsusa|"
+    r"schoolguide|schoolauthority|collegehelpguide|therapylicense",
     re.I,
 )
 
@@ -87,7 +96,9 @@ BLOCKED_HOSTS = {
     "educationguider.org", "niche.com", "collegesimply.com", "usnews.com",
     "collegeboard.org", "cappex.com", "greatschools.org", "publicschoolreview.com",
     "privateschoolreview.com", "bing.com", "duckduckgo.com", "yahoo.com",
-    "socialsecurityhop.com",
+    "socialsecurityhop.com", "beautyschoolsdirectory.com", "careerschoolnow.org",
+    "beautyschools.com", "beautyschoolfinder.com", "massagebook.com",
+    "massagesup.com", "cosmetologyschoolsnearme.org",
 }
 
 
@@ -111,30 +122,94 @@ def _name_tokens(institution: str) -> set[str]:
 
 
 def pick_best(urls: list[str], institution: str) -> str | None:
-    """Prefer a .edu match, but only ever accept a candidate whose hostname
-    contains at least one significant word from the institution's own name --
-    otherwise an unrelated but highly-ranked result (a government postcode
-    lookup outranking a small school, for instance) gets accepted as if it
-    were confirmed. This rejects legitimate foreign institutions whose domain
-    uses a native-language name (e.g. "University of Vienna" -> univie.ac.at),
-    which is why this script is scoped to US facilities only."""
+    """Prefer a .edu match, but only ever accept a candidate whose registrable
+    domain label (the part right before the public suffix, e.g. "msu" in
+    msu.edu or "massagebook" in massagebook.com -- never a subdomain prefix,
+    since a real school's own site is essentially always at its own
+    registrable domain, not hosted as a subdomain of someone else's) contains
+    a significant word from the institution's own name. This rejects
+    legitimate foreign institutions whose domain uses a native-language name
+    (e.g. "University of Vienna" -> univie.ac.at), which is why this script
+    is scoped to US facilities only.
+
+    A .edu domain is inherently harder to fake (restricted registration), so
+    one matching word is enough there. Any other TLD requires at least two
+    matching words -- a single generic word (e.g. "massage") is not enough
+    evidence on its own; it is exactly what let a third-party directory like
+    massagebook.com outrank the real massageschoolofmontana.com, which
+    matches on two words (massage + montana).
+
+    Also accepts a domain whose registrable label is a prefix of the acronym
+    formed from the institution's own words (e.g. "Tulsa Welding School" ->
+    "tws", "San Joaquin Valley College" -> "sjvc") -- many small schools' real
+    domains are exactly this kind of abbreviation rather than a spelled-out
+    word, which the word-matching checks above can't see on their own. Unlike
+    those checks' word list, category words like "college"/"institute"/
+    "school"/"university"/"academy" are KEPT here since their initials are
+    typically part of the real abbreviation (dropping them would turn
+    "Northeast Maritime Institute" into "nm" instead of "nmi", missing the
+    real nmi.edu). This acronym match counts on its own regardless of TLD.
+
+    A .edu candidate only wins the final tie-break when its match strength
+    (token count, or an acronym match counted as strength 2) STRICTLY beats
+    the strongest raw strength among every other candidate with any match at
+    all -- even one that doesn't itself clear the 2-word bar above. A weak,
+    single-word .edu match tied by an equally weak non-.edu candidate is
+    treated as ambiguous evidence and the whole lookup returns no guess,
+    rather than either one winning just for being .edu. That tie is exactly
+    what let an unrelated school like natradeschools.edu beat the real site
+    for "Delta School of Trades" on an accidental "trades" substring split
+    across "na-trade-schools" while a same-strength non-.edu competitor
+    (deltatechnicalcollege.com, matching only "delta") sat right next to it."""
     tokens = _name_tokens(institution)
     if not tokens:
         return None
-    allowed = []
+    acronym_stop_words = NAME_STOP_WORDS - {"college", "institute", "school", "university", "academy"}
+    acronym = "".join(
+        word[0] for word in re.findall(r"[a-z0-9]+", institution.lower())
+        if word not in acronym_stop_words
+    )
+    candidates = []
     for url in urls:
         host = (urlparse(url).hostname or "").removeprefix("www.")
         if not host or any(host == blocked or host.endswith("." + blocked) for blocked in BLOCKED_HOSTS):
             continue
         if BLOCKED_HOST_PATTERNS.search(host):
             continue
-        host_letters = re.sub(r"[^a-z0-9]", "", host.lower())
-        if any(token in host_letters for token in tokens):
-            allowed.append(url)
-    if not allowed:
+        is_edu = host.lower().endswith(".edu")
+        labels = host.lower().split(".")
+        registrable_label = re.sub(r"[^a-z0-9]", "", labels[-2] if len(labels) >= 2 else host.lower())
+        token_matches = sum(1 for token in tokens if token in registrable_label)
+        acronym_match = len(registrable_label) >= 2 and acronym.startswith(registrable_label)
+        strength = max(token_matches, 2) if acronym_match else token_matches
+        if strength == 0:
+            continue
+        qualifies = acronym_match or token_matches >= (1 if is_edu else 2)
+        candidates.append((url, is_edu, strength, qualifies))
+    if not candidates:
         return None
-    edu = [url for url in allowed if (urlparse(url).hostname or "").endswith(".edu")]
-    return edu[0] if edu else allowed[0]
+    best_non_edu_strength = max((s for _, edu, s, _ in candidates if not edu), default=0)
+    selectable = [
+        (url, is_edu, strength) for url, is_edu, strength, qualifies in candidates
+        if qualifies and (not is_edu or strength > best_non_edu_strength)
+    ]
+    if not selectable:
+        return None
+    # Among several qualifying candidates in the same edu/non-edu tier, prefer
+    # the one whose registrable label matches the MOST words from the
+    # institution's name, not just whichever search result happened to rank
+    # first -- search-result order reflects the query engine's relevance
+    # scoring, not name-match confidence, and picking list order first let a
+    # weaker two-word match (e.g. signaturedesignstyles.com, matching
+    # "signature"+"design") win over the correct three-word match
+    # (signaturedesignbeauty.com, matching "signature"+"design"+"beauty")
+    # just because it appeared earlier in the results. max() is stable, so
+    # true ties still resolve to the first-listed candidate as before.
+    edu_selectable = [(url, strength) for url, is_edu, strength in selectable if is_edu]
+    if edu_selectable:
+        return max(edu_selectable, key=lambda pair: pair[1])[0]
+    non_edu_selectable = [(url, strength) for url, is_edu, strength in selectable if not is_edu]
+    return max(non_edu_selectable, key=lambda pair: pair[1])[0]
 
 
 class QuotaExhausted(Exception):

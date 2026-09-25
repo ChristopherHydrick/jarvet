@@ -35,6 +35,7 @@ nul
 data/db_*_nt/
 data/ComparisonToolData.xlsx
 data/va-comparison/
+data/military-crosswalk/
 
 # Local environment files
 .env

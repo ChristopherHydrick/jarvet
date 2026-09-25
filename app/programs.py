@@ -41,6 +41,22 @@ class PageParser(HTMLParser):
             self.current_link["label"] += value + " "
 
 
+KNOWN_APPLICATION_GATEWAYS = {"opencccapply.net"}
+
+
+def _known_gateway(candidate: str) -> bool:
+    """True if candidate points to a known shared third-party application
+    system (for example OpenCCCApply, used instead of a school's own site by
+    all California Community Colleges) rather than the school's own domain.
+    A gateway link is exactly the case _same_site's same-domain check was
+    designed to exclude, yet it's the school's genuine apply page -- without
+    this, no homepage scan could ever find one, no matter how clearly it's
+    labeled "Apply", because the destination is never the school's own site.
+    """
+    host = (urlparse(candidate).hostname or "").removeprefix("www.")
+    return host in KNOWN_APPLICATION_GATEWAYS
+
+
 def _same_site(candidate: str, school_url: str) -> bool:
     candidate_host = urlparse(candidate).hostname or ""
     school_host = urlparse(school_url).hostname or ""
@@ -71,9 +87,14 @@ ADMISSIONS_WORDS = re.compile(
 # wording. Employment portals reliably live on their own "careers"/"jobs"
 # subdomain or path segment (a Workday/Taleo-style HR system, distinct from
 # the admissions site), so a candidate matching this is dropped regardless
-# of an otherwise-matching ADMISSIONS_WORDS hit.
+# of an otherwise-matching ADMISSIONS_WORDS hit. The path-segment markers
+# accept a hyphen as well as a slash before/after the word -- a plain
+# "/careers?/" or "/employment" missed slug-style paths like
+# "/careers-at-cornerstone-aviation/" or "/application-for-employment/",
+# which otherwise passed straight through as a false-positive "apply" match.
 EMPLOYMENT_PAGE_MARKERS = re.compile(
-    r"careers?\.\w|jobs?\.\w|/careers?/|/jobs?/|/employment|human[\s-]?resources|\bhiring\b|"
+    r"careers?\.\w|jobs?\.\w|[/-]careers?\b|[/-]jobs?\b|[/-]employment\b|"
+    r"human[\s-]?resources|\bhiring\b|"
     r"\bjob\s+opening|\bwork(?:ing)?\s+at\b|\bstaff\s+position|\bfaculty\s+position",
     re.I,
 )
@@ -149,9 +170,10 @@ async def discover_admissions_page(school_url: str) -> dict[str, str] | None:
     candidates: list[tuple[int, str, str]] = []
     for link in root.links:
         absolute = urljoin(final_url, link["url"])
-        if not _same_site(absolute, school_url):
+        is_gateway = _known_gateway(absolute)
+        if not is_gateway and not _same_site(absolute, school_url):
             continue
-        if urlparse(absolute).path.rstrip("/") == homepage_path:
+        if not is_gateway and urlparse(absolute).path.rstrip("/") == homepage_path:
             # Common on sites that build their nav as a Bootstrap-style
             # dropdown: the visible toggle button itself is an <a> tagged
             # href="#" and labeled "Apply Today"/"Apply Now", with the real

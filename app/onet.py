@@ -11,7 +11,13 @@ from pyoxigraph import Store
 SCHEMA = "https://www.onetcenter.org/rdf/schema/onet/"
 ROOT = Path(__file__).resolve().parent.parent
 BRIGHT_OUTLOOK = ROOT / "data" / "db_31_0_nt" / "BrightOutlook.csv"
+MILITARY_CROSSWALK = ROOT / "data" / "military-crosswalk" / "military_crosswalk.csv"
 PREFIXES = f"PREFIX onet: <{SCHEMA}>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>"
+MILITARY_BRANCH_LABELS = {
+    "A": "Army", "C": "Coast Guard", "F": "Air Force", "H": "Space Force",
+    "M": "Marine Corps", "N": "Navy", "P": "Navy (Officer Designator)",
+    "G": "Federal Civilian (OPM)",
+}
 STOP_WORDS = {
     "about", "already", "and", "are", "area", "available", "career", "certificate",
     "become", "consider", "could", "degree", "education", "enjoy", "find", "fits", "have", "help", "idea",
@@ -26,6 +32,13 @@ def _search_terms(query: str) -> list[str]:
     }
     terms.update(term[:-5] for term in tuple(terms) if term.endswith("shops") and len(term) > 7)
     return sorted(terms)
+
+
+def _military_code_candidates(query: str) -> list[str]:
+    return list(dict.fromkeys(
+        token.upper() for token in re.findall(r"[A-Za-z0-9]+", query)
+        if 2 <= len(token) <= 7 and any(char.isdigit() for char in token)
+    ))
 
 
 def _text(term: Any) -> str:
@@ -58,55 +71,65 @@ class OnetGraph:
             raise RuntimeError("O*NET graph store has not been loaded.")
         return self.store.query(f"{PREFIXES}\n{sparql}")
 
-    def search(self, query: str, limit: int = 5) -> list[dict]:
+    def search(self, query: str, limit: int = 5, bright_outlook_only: bool = False) -> list[dict]:
         if self.search_db is None:
             raise RuntimeError("O*NET search index has not been loaded.")
+        fetch_limit = limit * 6 if bright_outlook_only else limit
+        military_results = []
+        military_seen = set()
+        for candidate in _military_code_candidates(query):
+            for occupation in self.military_lookup(candidate):
+                if occupation["code"] not in military_seen:
+                    military_seen.add(occupation["code"])
+                    military_results.append(occupation)
+        text_results = []
         terms = _search_terms(query)
-        if not terms:
-            return []
-        term_query = " OR ".join(f'"{term}"*' for term in terms)
-        all_terms_query = " AND ".join(f'"{term}"*' for term in terms)
-        sql = """SELECT occupation_uri, code, title, description,
-                        bm25(occupation_search, 0, 0, 12, 9, 3, 5, 2, 2) AS rank
-                 FROM occupation_search WHERE occupation_search MATCH ?
-                 ORDER BY rank LIMIT ?"""
-        rows = list(self.search_db.execute(
-            sql, (f"{{title alternate_titles}} : ({all_terms_query})", limit)
-        ))
-        if len(rows) < limit:
-            seen = {row[1] for row in rows}
-            rows.extend(
-                row for row in self.search_db.execute(
-                    sql, (f"{{title alternate_titles}} : ({term_query})", limit * 2)
+        if terms:
+            term_query = " OR ".join(f'"{term}"*' for term in terms)
+            all_terms_query = " AND ".join(f'"{term}"*' for term in terms)
+            sql = """SELECT occupation_uri, code, title, description,
+                            bm25(occupation_search, 0, 0, 12, 9, 3, 5, 2, 2) AS rank
+                     FROM occupation_search WHERE occupation_search MATCH ?
+                     ORDER BY rank LIMIT ?"""
+            rows = list(self.search_db.execute(
+                sql, (f"{{title alternate_titles}} : ({all_terms_query})", fetch_limit)
+            ))
+            if len(rows) < fetch_limit:
+                seen = {row[1] for row in rows}
+                rows.extend(
+                    row for row in self.search_db.execute(
+                        sql, (f"{{title alternate_titles}} : ({term_query})", fetch_limit * 2)
+                    )
+                    if row[1] not in seen
                 )
-                if row[1] not in seen
-            )
-            rows = rows[:limit]
-        if len(rows) < limit:
-            seen = {row[1] for row in rows}
-            rows.extend(
-                row for row in self.search_db.execute(sql, (term_query, limit * 2))
-                if row[1] not in seen
-            )
-            rows = rows[:limit]
-        results = []
-        for row in rows:
-            bright = self.search_db.execute(
-                "SELECT categories FROM bright_outlook WHERE code = ?", (row[1],)
-            ).fetchone()
-            results.append({
-                "uri": row[0], "code": row[1], "title": row[2], "description": row[3],
-                "bright_outlook": bright[0].split("; ") if bright else [],
-            })
-        return results
+                rows = rows[:fetch_limit]
+            if len(rows) < fetch_limit:
+                seen = {row[1] for row in rows}
+                rows.extend(
+                    row for row in self.search_db.execute(sql, (term_query, fetch_limit * 2))
+                    if row[1] not in seen
+                )
+                rows = rows[:fetch_limit]
+            for row in rows:
+                if row[1] in military_seen:
+                    continue
+                bright = self.search_db.execute(
+                    "SELECT categories FROM bright_outlook WHERE code = ?", (row[1],)
+                ).fetchone()
+                text_results.append({
+                    "uri": row[0], "code": row[1], "title": row[2], "description": row[3],
+                    "bright_outlook": bright[0].split("; ") if bright else [],
+                })
+        combined = military_results + text_results
+        if bright_outlook_only:
+            combined = [item for item in combined if item["bright_outlook"]]
+        return combined[:limit]
 
     def results(self, query: str, limit: int = 5) -> list[dict]:
         terms = _search_terms(query)
         return [self._features(item, terms) for item in self.search(query, limit)]
 
-    def result_by_code(self, code: str) -> dict | None:
-        if self.search_db is None:
-            raise RuntimeError("O*NET search index has not been loaded.")
+    def _occupation_row(self, code: str) -> dict | None:
         row = self.search_db.execute(
             "SELECT occupation_uri, code, title, description FROM occupation_search WHERE code = ?",
             (code,),
@@ -116,11 +139,52 @@ class OnetGraph:
         bright = self.search_db.execute(
             "SELECT categories FROM bright_outlook WHERE code = ?", (code,)
         ).fetchone()
-        occupation = {
+        return {
             "uri": row[0], "code": row[1], "title": row[2], "description": row[3],
             "bright_outlook": bright[0].split("; ") if bright else [],
         }
-        return self._features(occupation, [])
+
+    def occupation_title(self, soc: str) -> str | None:
+        """Plain occupation title for a 7-character SOC code (e.g. 15-2051),
+        as used by the CIP-to-SOC crosswalk, via its base O*NET-SOC code."""
+        if self.search_db is None:
+            return None
+        row = self.search_db.execute(
+            "SELECT title FROM occupation_search WHERE code = ? OR code LIKE ? ORDER BY code LIMIT 1",
+            (f"{soc}.00", f"{soc}.%"),
+        ).fetchone()
+        return row[0] if row else None
+
+    def result_by_code(self, code: str) -> dict | None:
+        if self.search_db is None:
+            raise RuntimeError("O*NET search index has not been loaded.")
+        occupation = self._occupation_row(code)
+        return self._features(occupation, []) if occupation is not None else None
+
+    def military_lookup(self, code: str) -> list[dict]:
+        if self.search_db is None:
+            raise RuntimeError("O*NET search index has not been loaded.")
+        normalized = code.strip().upper()
+        if not normalized:
+            return []
+        rows = self.search_db.execute(
+            """SELECT DISTINCT onet_code, svc, moc_title, status FROM military_crosswalk
+               WHERE moc = ? ORDER BY status != 'A'""",
+            (normalized,),
+        ).fetchall()
+        results = []
+        seen = set()
+        for onet_code, svc, moc_title, status in rows:
+            occupation = self._occupation_row(onet_code)
+            if occupation is None or occupation["code"] in seen:
+                continue
+            seen.add(occupation["code"])
+            occupation["military_match"] = {
+                "code": normalized, "title": moc_title,
+                "branch": MILITARY_BRANCH_LABELS.get(svc, svc), "active": status == "A",
+            }
+            results.append(occupation)
+        return results
 
     def related_results(self, occupation: dict, limit: int = 8) -> list[dict]:
         rows = self._query(f"""
@@ -206,6 +270,25 @@ class OnetGraph:
                 "INSERT INTO bright_outlook VALUES (?, ?)",
                 ((row["Code"], row["Categories"]) for row in csv.DictReader(source)),
             )
+        connection.execute("""
+            CREATE TABLE military_crosswalk (
+              moc TEXT NOT NULL, onet_code TEXT NOT NULL, svc TEXT NOT NULL,
+              moc_title TEXT NOT NULL, status TEXT NOT NULL
+            )
+        """)
+        connection.execute("CREATE INDEX military_crosswalk_moc ON military_crosswalk (moc)")
+        if MILITARY_CROSSWALK.exists():
+            with MILITARY_CROSSWALK.open(newline="", encoding="utf-8-sig") as source:
+                entries = [
+                    (moc, onet_code, row["SVC"], row["MOC_TITLE"], row["STATUS"])
+                    for row in csv.DictReader(source)
+                    if (moc := row["MOC"].strip().upper())
+                    for onet_code in (row.get(f"ONET{i}", "").strip() for i in "1234")
+                    if onet_code
+                ]
+                connection.executemany(
+                    "INSERT INTO military_crosswalk VALUES (?, ?, ?, ?, ?)", entries
+                )
         connection.commit()
         connection.close()
 

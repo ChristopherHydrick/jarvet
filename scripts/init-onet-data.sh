@@ -13,12 +13,18 @@ VA_COMPARISON_FILE="${VA_DATA_DIR}/ComparisonToolData.xlsx"
 VA_COMPARISON_URL="https://www.benefits.va.gov/GIBILL/docs/job_aids/ComparisonToolData.xlsx"
 ZCTA_FILE="${VA_DATA_DIR}/2025_Gaz_zcta_national.zip"
 ZCTA_URL="https://www2.census.gov/geo/docs/maps-data/data/gazetteer/2025_Gazetteer/2025_Gaz_zcta_national.zip"
+MILITARY_DIR="${WORKSPACE_DIR}/data/military-crosswalk"
+MILITARY_FILE="${MILITARY_DIR}/military_crosswalk.csv"
+MILITARY_URL="https://www.onetcenter.org/dl_files/2019/military_crosswalk.zip"
+
+CLEANUP_DIRS=()
+trap 'rm -rf "${CLEANUP_DIRS[@]}"' EXIT
 
 if [[ -f "${DATA_DIR}/Read Me.txt" ]]; then
   echo "O*NET ${ONET_VERSION//_/.} N-Triples data is already initialized."
 else
   TEMP_DIR="$(mktemp -d)"
-  trap 'rm -rf "${TEMP_DIR}"' EXIT
+  CLEANUP_DIRS+=("${TEMP_DIR}")
 
   echo "Downloading O*NET ${ONET_VERSION//_/.} N-Triples data..."
   curl --fail --location --retry 3 --output "${TEMP_DIR}/${ARCHIVE_NAME}" "${DOWNLOAD_URL}"
@@ -51,4 +57,20 @@ if [[ ! -f "${ZCTA_FILE}" || "${REFRESH_VA_DATA:-0}" == "1" ]]; then
   echo "Downloading Census ZIP-area centroids..."
   curl --fail --location --retry 3 --output "${ZCTA_FILE}.download" "${ZCTA_URL}"
   mv "${ZCTA_FILE}.download" "${ZCTA_FILE}"
+fi
+
+mkdir -p "${MILITARY_DIR}"
+if [[ ! -f "${MILITARY_FILE}" || "${REFRESH_VA_DATA:-0}" == "1" ]]; then
+  echo "Downloading the O*NET Military Crosswalk dataset..."
+  MILITARY_TEMP_DIR="$(mktemp -d)"
+  CLEANUP_DIRS+=("${MILITARY_TEMP_DIR}")
+  curl --fail --location --retry 3 --output "${MILITARY_TEMP_DIR}/military_crosswalk.zip" "${MILITARY_URL}"
+  unzip -q "${MILITARY_TEMP_DIR}/military_crosswalk.zip" -d "${MILITARY_TEMP_DIR}/extracted"
+  MILITARY_CSV_SOURCE="$(find "${MILITARY_TEMP_DIR}/extracted" -iname '*.csv' | head -n 1)"
+  if [[ -z "${MILITARY_CSV_SOURCE}" ]]; then
+    echo "The downloaded military crosswalk archive did not contain a CSV file." >&2
+    exit 1
+  fi
+  cp "${MILITARY_CSV_SOURCE}" "${MILITARY_FILE}.download"
+  mv "${MILITARY_FILE}.download" "${MILITARY_FILE}"
 fi

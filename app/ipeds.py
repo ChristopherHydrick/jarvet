@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import collections
 import math
 import sqlite3
 from pathlib import Path
@@ -12,6 +13,22 @@ AWARD_LEVELS = {
     "19": "doctoral", "20": "doctoral", "21": "doctoral",
 }
 CONTROL_LABELS = {1: "public", 2: "private nonprofit", 3: "private for-profit"}
+# Careers the CIP-to-SOC crosswalk attaches to so many fields of study that
+# sharing one says nothing about two fields being related: every academic
+# subject maps to its own postsecondary-teacher code (25-1xxx), and catch-alls
+# like "Natural Sciences Managers" (11-9121) or "Managers, All Other" (11-9199)
+# link 100+ fields -- which made Creative Writing "related" to Data Science.
+# Most careers link about 4 fields; anything linked to more than this is
+# ignored when relating fields, as is every "All Other" catch-all code (SOC
+# codes ending in 9, e.g. 19-4099, 27-1019) -- "Life, Physical, and Social
+# Science Technicians, All Other" made a nanomaterials certificate "related"
+# to criminal justice.
+GENERIC_CAREER_FIELD_LIMIT = 30
+# Below this share of careers in common (shared / combined), two fields are
+# not shown as related. Calibrated by hand across data science, nursing
+# assistant, welding, criminal justice, graphic design, accounting and
+# electrician fields.
+RELATED_FIELD_MIN_OVERLAP = 0.2
 
 
 class IpedsIndex:
@@ -24,6 +41,8 @@ class IpedsIndex:
         self.connection: sqlite3.Connection | None = None
         self.institution_count = 0
         self.program_count = 0
+        self.cip_titles: dict[str, str] = {}
+        self.field_careers: dict[str, set[str]] = {}
 
     def load(self) -> None:
         if not self.path.exists():
@@ -36,6 +55,47 @@ class IpedsIndex:
         self.program_count = self.connection.execute(
             "SELECT COUNT(*) FROM programs"
         ).fetchone()[0]
+        self.cip_titles = dict(self.connection.execute("SELECT cip, title FROM cip_titles"))
+        linked: dict[str, set[str]] = collections.defaultdict(set)
+        for cip, soc_codes in self.connection.execute(
+            "SELECT DISTINCT cip, soc_codes FROM programs"
+        ):
+            for soc in soc_codes.replace(";", ",").split(","):
+                if soc.strip():
+                    linked[cip].add(soc.strip()[:7])
+        fields_per_career = collections.Counter(soc for socs in linked.values() for soc in socs)
+        self.field_careers = {
+            cip: {
+                soc for soc in socs
+                if not soc.startswith("25-1") and not soc.endswith("9")
+                and fields_per_career[soc] <= GENERIC_CAREER_FIELD_LIMIT
+            }
+            for cip, socs in linked.items()
+        }
+
+    def related_fields(self, cip: str, limit: int = 8) -> list[dict[str, Any]]:
+        """Fields of study that prepare for the same careers as cip, most
+        overlapping first, via the official CIP-to-SOC crosswalk. Each entry
+        carries the shared career codes so a caller can explain the link."""
+        careers = self.field_careers.get(cip) or set()
+        if not careers:
+            return []
+        scored = []
+        for other, other_careers in self.field_careers.items():
+            shared = careers & other_careers
+            if other == cip or not shared:
+                continue
+            overlap = len(shared) / len(careers | other_careers)
+            if overlap >= RELATED_FIELD_MIN_OVERLAP:
+                scored.append((overlap, other, shared))
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        return [
+            {
+                "cip": other, "title": self.cip_titles.get(other, other),
+                "overlap": round(overlap, 2), "shared_careers": sorted(shared),
+            }
+            for overlap, other, shared in scored[:limit]
+        ]
 
     def _database(self) -> sqlite3.Connection:
         if self.connection is None:

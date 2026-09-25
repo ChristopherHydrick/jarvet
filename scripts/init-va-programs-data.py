@@ -1,4 +1,4 @@
-"""Bulk-crawl every VA-approved school's IHL/NCD program catalog.
+"""Bulk-crawl every VA-approved school's IHL/NCD/FLGT program catalog.
 
 app/va.py's provider_details() only fetches and caches one facility's
 programs on demand, when the agent looks that facility up. This script
@@ -9,8 +9,13 @@ VA-approved school nationwide or within one state, not just schools already
 looked up. It is resumable: facility codes already recorded in
 va_programs_crawl_state are skipped on a re-run, so an interrupted crawl can
 just be restarted. It is not wired into postCreateCommand.sh because a full
-run makes roughly two API calls per approved school (~35,000 requests) and
+run makes roughly three API calls per approved school (~53,000 requests) and
 can take a long time; run it manually and re-run it periodically to refresh.
+
+Standalone flight academies (VA facility type "FLIGHT") file their approved
+courses under a third program type, "FLGT", that IHL/NCD does not cover --
+without it, schools like flight academies are entirely absent from program
+search even though they hold real VA-approved pilot training programs.
 """
 from __future__ import annotations
 
@@ -24,7 +29,7 @@ import httpx
 
 ROOT = Path(__file__).resolve().parent.parent
 DATABASE = ROOT / ".cache" / "va-comparison.sqlite"
-PROGRAM_TYPES = ("IHL", "NCD")
+PROGRAM_TYPES = ("IHL", "NCD", "FLGT")
 CONCURRENCY = 20
 BATCH_COMMIT = 200
 REQUEST_TIMEOUT = 20
@@ -80,11 +85,12 @@ async def fetch_programs(
 
 async def crawl_facility(
     client: httpx.AsyncClient, semaphore: asyncio.Semaphore, facility_code: str,
+    program_types: tuple[str, ...],
 ) -> tuple[str, list[tuple[str, str]], bool]:
     async with semaphore:
         rows: list[tuple[str, str]] = []
         ok = True
-        for program_type in PROGRAM_TYPES:
+        for program_type in program_types:
             try:
                 descriptions = await fetch_programs(client, facility_code, program_type)
             except (httpx.HTTPError, ValueError):
@@ -97,43 +103,43 @@ async def crawl_facility(
 def flush(
     connection: sqlite3.Connection,
     pending: list[tuple[str, list[tuple[str, str]], bool]],
+    program_types: tuple[str, ...],
+    track_state: bool,
 ) -> None:
     now = int(time.time())
     for facility_code, rows, ok in pending:
         if not ok:
             continue
+        for program_type in program_types:
+            connection.execute(
+                "DELETE FROM va_programs WHERE facility_code = ? AND program_type = ?",
+                (facility_code, program_type),
+            )
         if rows:
             connection.executemany(
                 "INSERT INTO va_programs (facility_code, program_type, description) "
                 "VALUES (?, ?, ?)",
                 [(facility_code, program_type, description) for program_type, description in rows],
             )
-        connection.execute(
-            "INSERT OR REPLACE INTO va_programs_crawl_state VALUES (?, ?, ?)",
-            (facility_code, len(rows), now),
-        )
+        if track_state:
+            connection.execute(
+                "INSERT OR REPLACE INTO va_programs_crawl_state VALUES (?, ?, ?)",
+                (facility_code, len(rows), now),
+            )
     connection.commit()
 
 
-async def crawl(connection: sqlite3.Connection, test_limit: int | None) -> None:
-    already_done = {
-        row[0] for row in connection.execute("SELECT facility_code FROM va_programs_crawl_state")
-    }
-    all_codes = [
-        row[0] for row in connection.execute(
-            "SELECT facility_code FROM facilities WHERE approved = 1 AND school_provider = 1"
-        )
-    ]
-    facility_codes = [code for code in all_codes if code not in already_done]
+async def crawl(
+    connection: sqlite3.Connection, test_limit: int | None,
+    facility_codes: list[str], program_types: tuple[str, ...], track_state: bool,
+) -> None:
+    total = len(facility_codes)
     if test_limit is not None:
         facility_codes = facility_codes[:test_limit]
     if not facility_codes:
-        print(f"All {len(all_codes):,} approved school facilities already crawled.")
+        print(f"All {total:,} facilities already crawled.")
         return
-    print(
-        f"Crawling {len(facility_codes):,} of {len(all_codes):,} approved school "
-        f"facilities ({len(already_done):,} already done, resuming)..."
-    )
+    print(f"Crawling {len(facility_codes):,} of {total:,} facilities for {', '.join(program_types)}...")
 
     semaphore = asyncio.Semaphore(CONCURRENCY)
     done = 0
@@ -143,7 +149,7 @@ async def crawl(connection: sqlite3.Connection, test_limit: int | None) -> None:
 
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, follow_redirects=True) as client:
         tasks = [
-            asyncio.create_task(crawl_facility(client, semaphore, code))
+            asyncio.create_task(crawl_facility(client, semaphore, code, program_types))
             for code in facility_codes
         ]
         for task in asyncio.as_completed(tasks):
@@ -155,7 +161,7 @@ async def crawl(connection: sqlite3.Connection, test_limit: int | None) -> None:
             else:
                 failed += 1
             if len(pending) >= BATCH_COMMIT:
-                flush(connection, pending)
+                flush(connection, pending, program_types, track_state)
                 pending.clear()
                 print(
                     f"  {done:,}/{len(facility_codes):,} attempted, "
@@ -163,7 +169,7 @@ async def crawl(connection: sqlite3.Connection, test_limit: int | None) -> None:
                     flush=True,
                 )
         if pending:
-            flush(connection, pending)
+            flush(connection, pending, program_types, track_state)
             print(
                 f"  {done:,}/{len(facility_codes):,} attempted, "
                 f"{program_total:,} programs found, {failed:,} failed (will retry on re-run)",
@@ -185,16 +191,44 @@ def build_search_index(connection: sqlite3.Connection) -> None:
     )
     connection.commit()
     count = connection.execute("SELECT COUNT(*) FROM va_program_search").fetchone()[0]
-    print(f"Built search index over {count:,} VA-approved IHL/NCD program rows.")
+    print(f"Built search index over {count:,} VA-approved IHL/NCD/FLGT program rows.")
 
 
 def main() -> None:
     if not DATABASE.exists():
         raise SystemExit("VA Comparison Tool index is missing. Run scripts/init-va-data.py first.")
-    test_limit = int(sys.argv[1]) if len(sys.argv) > 1 else None
+    args = sys.argv[1:]
+    flight_only = "--flight-only" in args
+    args = [a for a in args if a != "--flight-only"]
+    test_limit = int(args[0]) if args else None
+
     connection = sqlite3.connect(DATABASE)
     ensure_schema(connection)
-    asyncio.run(crawl(connection, test_limit))
+    if flight_only:
+        # Backfill just the FLGT type for known flight schools (facilities.flight
+        # = 1), skipping crawl_state entirely -- that table only tracks whether a
+        # facility's IHL/NCD pass is done and would wrongly skip every flight
+        # school here, since they were already marked done under the old
+        # IHL/NCD-only crawl. Cheap (~500 requests nationwide) and safe to
+        # re-run any time to refresh, unlike the full crawl below.
+        facility_codes = [
+            row[0] for row in connection.execute(
+                "SELECT facility_code FROM facilities WHERE approved = 1 "
+                "AND school_provider = 1 AND flight = 1"
+            )
+        ]
+        asyncio.run(crawl(connection, test_limit, facility_codes, ("FLGT",), False))
+    else:
+        already_done = {
+            row[0] for row in connection.execute("SELECT facility_code FROM va_programs_crawl_state")
+        }
+        facility_codes = [
+            row[0] for row in connection.execute(
+                "SELECT facility_code FROM facilities WHERE approved = 1 AND school_provider = 1"
+            )
+            if row[0] not in already_done
+        ]
+        asyncio.run(crawl(connection, test_limit, facility_codes, PROGRAM_TYPES, True))
     build_search_index(connection)
     connection.close()
 

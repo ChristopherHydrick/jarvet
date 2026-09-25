@@ -25,18 +25,27 @@ their own trusted destination.
   summaries (degree, non-college, OJT, apprenticeship), and official VA
   Comparison Tool detail links.
 - **VA program catalog search** — keyword search over every VA-approved
-  school's own IHL (degree) and NCD (certificate/non-college) program list,
-  nationwide or by state, independent of IPEDS's occupation classification.
-  Complements local training discovery for proprietary trade schools (for
-  example commercial diving academies) that IPEDS's CIP-to-SOC crosswalk does
-  not always classify under the matching occupation.
+  school's own IHL (degree), NCD (certificate/non-college), and FLGT (flight
+  training) program list, nationwide or by state, independent of IPEDS's
+  occupation classification. Complements local training discovery for
+  proprietary trade schools (for example commercial diving or flight
+  academies) that IPEDS's CIP-to-SOC crosswalk does not always classify under
+  the matching occupation.
 - **Agentic tool calling** — the model decides which tools to call; Python
   validates arguments and returns structured facts. Geographic and occupational
   broadening are separate, explicit actions.
 - **Direction memory** — opt-in browser-local profile, selected occupation, and
   bookmarked providers sent to the agent as soft comparison context.
-- **Response caching** — successful chat turns are cached in SQLite for fast
-  repeat demos, with TTL, LRU limit, and version controls.
+- **Apply-page discovery** — a bounded crawl of each school's own site finds its
+  real admissions/apply page (or a verified `/apply` fallback path), recognizes
+  links out to known shared third-party application gateways (for example
+  OpenCCCApply) instead of discarding them as off-domain, and falls back to a
+  hardcoded OpenCCCApply override for the 115 California Community Colleges
+  where that's not enough; the agent attaches the result as an "Apply" link
+  and can look one up live on request.
+- **Website discovery** — for approved schools VA lists with no website, a
+  Serper.dev search finds a likely candidate site, shown as an explicitly
+  unverified link rather than a confirmed one.
 
 ## Architecture
 
@@ -47,10 +56,11 @@ their own trusted destination.
 | Occupation graph | O*NET 31.0 N-Triples in an embedded Oxigraph store + FTS5 search index |
 | School programs | IPEDS directory + completions + O*NET CIP-to-SOC crosswalk in SQLite |
 | Provider & benefit data | VA GI Bill Comparison Tool workbook in SQLite + VA institution API (7-day cache) |
-| VA program catalog | Bulk crawl of every approved school's IHL/NCD programs from the VA institution-programs API, indexed with FTS5 |
+| VA program catalog | Bulk crawl of every approved school's IHL/NCD programs from the VA institution-programs API, indexed with FTS5, plus a semantic embedding index over program titles |
 | Geography | Census 2025 ZCTA Gazetteer centroids for proximity and ZIP resolution |
+| Apply/admissions/website discovery | Offline bulk crawlers (`curl`-based fetches to dodge WAF fingerprinting) plus Serper.dev search for schools with no VA-listed website |
 | Frontend | Vanilla HTML/CSS/JS single page |
-| Caching | SQLite response cache, VA API cache, My Next Move HTML parsing |
+| Caching | VA API cache, My Next Move HTML parsing (chat-response caching exists in code but is currently disabled) |
 | Devcontainer | Docker, Cloudflare Tunnel (`cloudflared`), JupyterLab on port 7788 |
 
 ## Quick start
@@ -95,6 +105,13 @@ Initialization also downloads O*NET OnLine's official Bright Outlook CSV and
 joins its current growth, openings, and new/emerging categories to occupations
 by O*NET-SOC code.
 
+Initialization also downloads the Defense Manpower Data Center's [O*NET
+Military Crosswalk](https://www.onetcenter.org/crosswalks.html) file, which
+maps military job codes (Army MOS, Air Force AFSC, Navy rating/NEC, Marine
+Corps MOS, Space Force code) to O*NET-SOC occupations. Searching an
+occupation by one of these codes (for example `25U`) resolves it directly to
+the matching civilian occupation(s) instead of relying on keyword text search.
+
 ## VA provider and benefit data
 
 Initialization downloads the official VA GI Bill Comparison Tool workbook and
@@ -120,22 +137,48 @@ REFRESH_VA_DATA=1 ./scripts/init-onet-data.sh
 ### VA program catalog
 
 `scripts/init-va-programs-data.py` bulk-crawls every approved
-`school_provider` facility's IHL and NCD program list from the same public VA
-institution-programs API that provider detail lookups already use for one
-facility at a time, then builds an FTS5 index over the results
-(`va_program_search` in `.cache/va-comparison.sqlite`). This is what backs
-`VaComparison.programs_for()` and the agent's `find_va_programs` tool for
-nationwide/state program search independent of IPEDS. It is not run by
-`postCreateCommand.sh`: a full crawl makes roughly two API calls per approved
-school (tens of thousands of requests) and can take a while. Run it manually,
-and re-run it periodically to refresh:
+`school_provider` facility's IHL, NCD, and FLGT (flight training) program
+list from the same public VA institution-programs API that provider detail
+lookups already use for one facility at a time, then builds an FTS5 index
+over the results (`va_program_search` in `.cache/va-comparison.sqlite`). This
+is what backs `VaComparison.programs_for()` and the agent's
+`find_va_programs` tool for nationwide/state program search independent of
+IPEDS. It is not run by `postCreateCommand.sh`: a full crawl makes roughly
+three API calls per approved school (tens of thousands of requests) and can
+take a while. Run it manually, and re-run it periodically to refresh:
 
 ```bash
 .venv/bin/python scripts/init-va-programs-data.py
 ```
 
 The crawl is resumable — facility codes already recorded are skipped on a
-re-run, so an interrupted crawl can simply be restarted.
+re-run, so an interrupted crawl can simply be restarted. Standalone flight
+academies file their approved courses under FLGT specifically, a type IHL/NCD
+never covered — `scripts/init-va-data.py` records which facilities these are
+in `facilities.flight` (sourced directly from the VA workbook's own "flight"
+column, the same authoritative source as the rest of the facilities table).
+To backfill just those facilities' FLGT programs cheaply (~500 requests)
+instead of a full re-crawl, run:
+
+```bash
+.venv/bin/python scripts/init-va-programs-data.py --flight-only
+```
+
+`programs_for()` also layers hand-curated retrieval fixes onto the FTS5 word
+match: a small synonym list (`pilot`/`flight`, `trucking`/`cdl`), an
+`emt`→"emergency medical" phrase expansion, degree-level exact-word filtering
+(so "bs marketing" can require the literal "bs"), and a growing list of
+manually verified false-positive/false-negative exceptions. As a last resort
+when word matching finds nothing, `scripts/init-va-program-embeddings.py`
+embeds every distinct program title with the same `BAAI/bge-small-en-v1.5`
+model used for provider names, into `program_embeddings` in
+`.cache/va-comparison.sqlite`, so a genuine synonym or abbreviation with no
+shared letters (EMT, CNA, HVAC, CDL) can still be found by cosine similarity.
+Like the programs crawl, this is not run by `postCreateCommand.sh`:
+
+```bash
+.venv/bin/python scripts/init-va-program-embeddings.py
+```
 
 ## School program data (IPEDS)
 
@@ -167,6 +210,80 @@ are cached by facility code in `.cache/va-comparison.sqlite` for seven days;
 stale data is used if VA is temporarily unavailable. Program lists are filtered
 against the current career and study direction and summarized in the card, with
 the full official VA list linked separately.
+
+For the roughly two-thirds of approved schools VA lists with no website at
+all, `scripts/init-va-website-guesses.py` searches
+`"<institution> <city> <state>"` via the Serper.dev API (`SERPER_API_KEY` in
+`.env`/`.env.example`), filters out directories and social/review sites,
+prefers `.edu` matches, and excludes high schools and non-US facilities. A
+guessed website is never presented as VA-confirmed — the frontend renders it
+as a visually distinct, explicitly unverified link. Without a valid
+`SERPER_API_KEY`, this one script simply can't run (it exits with a clear
+error rather than failing partway through) — everything else in this file,
+including the program catalog and Apply-link crawls, is unaffected.
+
+`scripts/init-va-admissions-guesses.py` and `init-va-apply-path-guesses.py`
+then crawl each school's own site (confirmed or guessed) to find its real
+admissions/apply page, falling back to a verified `/apply` path when no link
+is found. The homepage scan (`discover_admissions_page` in `app/programs.py`)
+only trusts links on the school's own domain by default, which would silently
+drop a link to a shared third-party application gateway like OpenCCCApply
+(used instead of a school's own site by every California Community College);
+it now recognizes a small allowlist of known gateway domains
+(`KNOWN_APPLICATION_GATEWAYS`) as valid destinations too, rather than
+requiring every such system to be discovered the hard way. Only OpenCCCApply
+is in that list today — it's the one confirmed in this codebase — and
+`init-va-cccapply-guesses.py` still separately overrides the crawler's guess
+with an authoritative, hand-verified OpenCCCApply URL for the 115 California
+Community Colleges, since a specific known case is worth pinning exactly even
+with the generic detection in place. All three write into a shared
+`va_admissions_guesses` table, which the agent surfaces as an "Apply" link on
+the school's card and can also look up live, on demand, for a single
+already-named school. None of these five discovery scripts
+(`init-va-website-guesses.py`, `init-va-admissions-guesses.py`,
+`init-va-apply-path-guesses.py`, `init-va-cccapply-guesses.py`,
+`init-va-program-embeddings.py`) run automatically in `postCreateCommand.sh`;
+run them manually and re-run periodically to refresh, same as
+`init-va-programs-data.py`.
+
+## Data safety and backups
+
+`.cache/va-comparison.sqlite` is shared storage for several independent
+scripts' tables: `facilities`/`zcta` (`init-va-data.py`), `va_programs`/
+`va_program_search` (`init-va-programs-data.py`), `va_website_guesses`,
+`va_admissions_guesses`, and `provider_embeddings`/`program_embeddings`.
+Rebuilding one script's own table must never touch the others'.
+`init-va-data.py` used to delete and recreate the entire file on every run,
+which once silently wiped out every other script's table — including a
+388,000-row program catalog and every crawled Apply link — during what was
+meant to be an unrelated, one-column change. It now only drops and recreates
+the two tables it actually owns, `facilities` and `zcta`, via ordinary SQL
+(`DROP TABLE` / `CREATE TABLE`) inside the existing file, leaving every other
+table untouched.
+
+Running any of these rebuild scripts while the live app is running is still
+worth avoiding regardless: `app/va.py`'s `VaIndex` keeps one long-lived
+connection to this same file open for the app's entire lifetime, and a
+file-level delete-and-recreate (as opposed to an in-place `DROP`/`CREATE
+TABLE`) done underneath that live connection can corrupt the shared file, not
+just leave it with missing tables. Stop `start-web.sh`'s server (or the
+devcontainer's uvicorn process) before running one of these scripts by hand.
+
+Neither `va-comparison.sqlite` nor `ipeds.sqlite` is committed to git (see
+above) — both routinely exceed GitHub's 100MB single-file limit, and some of
+their contents (Serper-derived website guesses in particular) cost real API
+calls and time to rebuild, and cannot always be regenerated at all if, for
+example, a search API key is later canceled. Back both up to an external,
+synced folder with:
+
+```bash
+./scripts/backup-cache.sh   # reads CACHE_BACKUP_DIR from .env
+```
+
+Set `CACHE_BACKUP_DIR` in `.env` first (a cloud-synced folder such as OneDrive
+works well, since it gives automatic off-machine copies and version history
+for free). Run this after any full or partial rebuild of either cache, and
+before running any script that rebuilds them.
 
 ## Web application
 
@@ -236,15 +353,14 @@ use the existing opt-in browser direction memory and are sent to the agent as
 soft comparison context; they do not restrict later answers or searches unless
 the user explicitly asks to search only those providers.
 
-Successful chat turns are cached in `.cache/chat-responses.sqlite`. To preheat a
-demo, walk through the intended paths once; repeating the same choices will reuse
-the complete response, including profile state, suggestions, and trusted links,
-across browser refreshes and server restarts. Cache entries expire after seven
-days and the 500 least-recently-used limit is configurable with
-`JARVET_CACHE_TTL_SECONDS` and `JARVET_CACHE_MAX_ENTRIES`. Increment
-`JARVET_CACHE_VERSION` when response behavior changes and old warm entries should
-be ignored. `/api/health` reports cache entries, hits, and misses, while each chat
-response includes `X-Jarvet-Cache: HIT` or `MISS`.
+Chat-response caching (`.cache/chat-responses.sqlite`, `app/cache.py`) is
+currently wired up but disabled: an occasional bad or inconsistent model
+answer would otherwise get frozen under its exact request key indefinitely,
+masking real fixes. Every chat response includes `X-Jarvet-Cache: DISABLED`,
+and `/api/health` still reports the cache's entry count from before it was
+disabled but hits/misses stay at zero. The `JARVET_CACHE_TTL_SECONDS`,
+`JARVET_CACHE_MAX_ENTRIES`, and `JARVET_CACHE_VERSION` env vars still
+construct the (unused) cache object but have no observable effect.
 
 ## Performance
 
@@ -295,3 +411,5 @@ This project uses data from sources with their own terms:
 - **VA GI Bill Comparison Tool** data and the public VA institution API,
   U.S. Department of Veterans Affairs.
 - **U.S. Census Bureau Gazetteer** files, public domain.
+- **O*NET Military Crosswalk** data, sourced from the Defense Manpower Data
+  Center and distributed by the O*NET Resource Center.

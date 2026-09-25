@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import re
+import socket
 import sqlite3
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -12,11 +14,37 @@ WORKBOOK = SOURCE_DIR / "ComparisonToolData.xlsx"
 ZCTA_ARCHIVE = SOURCE_DIR / "2025_Gaz_zcta_national.zip"
 DATABASE = ROOT / ".cache" / "va-comparison.sqlite"
 MARKER = ROOT / ".cache" / "va-comparison.ready"
-INDEX_VERSION = 2
+INDEX_VERSION = 3
 XML_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+
+
+def refuse_if_server_running() -> None:
+    """app/va.py's VaIndex keeps one long-lived connection to DATABASE open
+    for the whole lifetime of the running app. Rebuilding this file's schema
+    while that connection is live once corrupted the file outright (not just
+    left it with stale data), because the devcontainer runs uvicorn directly
+    as its container command rather than through start-web.sh, so there's no
+    pidfile to check -- a live TCP probe of the app's own port is the one
+    signal that works regardless of how it was started. Set
+    JARVET_ALLOW_LIVE_REBUILD=1 to override (for example if you've confirmed
+    whatever's listening on that port isn't actually Jarvet)."""
+    if os.environ.get("JARVET_ALLOW_LIVE_REBUILD") == "1":
+        return
+    port = int(os.environ.get("JARVET_PORT", "8000"))
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(1)
+        if sock.connect_ex(("127.0.0.1", port)) != 0:
+            return  # Nothing listening -- safe to proceed.
+    raise SystemExit(
+        f"Something is listening on port {port} -- Jarvet's server appears to "
+        "be running. Stop it first (stop the container, or kill the uvicorn "
+        "process) before rebuilding this shared database: rebuilding it live "
+        "once corrupted the file. Set JARVET_ALLOW_LIVE_REBUILD=1 to skip "
+        "this check."
+    )
 FIELDS = (
     "facility code", "institution", "city", "state", "zip", "country", "type",
-    "approved", "bah", "insturl", "vet tuition policy url", "pred degree awarded",
+    "approved", "flight", "bah", "insturl", "vet tuition policy url", "pred degree awarded",
     "gibill", "undergrad enrollment", "student veteran", "credit for mil training",
     "p911 tuition fees", "p911 recipients", "p911 yellow ribbon", "p911 yr recipients",
     "accredited", "accreditation type", "accreditation status", "caution flag",
@@ -25,7 +53,7 @@ FIELDS = (
 )
 REAL_FIELDS = {"bah", "p911 tuition fees", "p911 yellow ribbon", "latitude", "longitude"}
 INTEGER_FIELDS = {
-    "approved", "gibill", "undergrad enrollment", "student veteran",
+    "approved", "flight", "gibill", "undergrad enrollment", "student veteran",
     "credit for mil training", "p911 recipients", "p911 yr recipients", "accredited",
     "caution flag", "school closing", "employer provider", "school provider",
 }
@@ -77,13 +105,25 @@ def build_database() -> None:
         print("VA Comparison Tool index is ready.")
         return
 
+    refuse_if_server_running()
     DATABASE.parent.mkdir(parents=True, exist_ok=True)
-    DATABASE.unlink(missing_ok=True)
     connection = sqlite3.connect(DATABASE)
+    # Rebuild only the tables this script owns (facilities, zcta), never the
+    # whole file. va-comparison.sqlite is shared storage for several other
+    # scripts' tables (va_programs, va_website_guesses, va_admissions_guesses,
+    # provider_details) that each take real time/API calls to rebuild --
+    # deleting the file wiped all of them out from under this script's own,
+    # unrelated rebuild once already. Dropping only these two tables via a
+    # normal SQL transaction also avoids the file-level delete-and-recreate
+    # race that corrupted this same file while the live app server held it
+    # open in WAL mode: a DROP/CREATE TABLE is just an ordinary write SQLite
+    # already knows how to coordinate with concurrent readers.
+    connection.execute("DROP TABLE IF EXISTS facilities")
+    connection.execute("DROP TABLE IF EXISTS zcta")
     connection.execute("""
         CREATE TABLE facilities (
           facility_code TEXT PRIMARY KEY, institution TEXT NOT NULL, city TEXT, state TEXT,
-          zip TEXT, country TEXT, type TEXT, approved INTEGER, bah REAL, insturl TEXT,
+          zip TEXT, country TEXT, type TEXT, approved INTEGER, flight INTEGER, bah REAL, insturl TEXT,
           vet_tuition_policy_url TEXT, pred_degree_awarded TEXT, gibill INTEGER,
           undergrad_enrollment INTEGER, student_veteran INTEGER, credit_for_mil_training INTEGER,
           p911_tuition_fees REAL, p911_recipients INTEGER, p911_yellow_ribbon REAL,

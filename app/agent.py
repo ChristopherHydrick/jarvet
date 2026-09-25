@@ -15,6 +15,19 @@ from app.va import VaComparison
 
 TrainingFetcher = Callable[[str, str], Awaitable[list[dict[str, str]] | None]]
 
+# A city resolves to a single point (the centroid of its most common school
+# ZIP -- see VaComparison.resolve_area), not to where the veteran actually
+# lives within it, so a strict cutoff drops schools the veteran would
+# reasonably count as "within 20 miles" (a "20 miles of Redwood City" search
+# lost San Jose State at 20.3 mi purely from where the center point landed).
+# Every distance cutoff is quietly widened by this much; the reply still
+# talks about the radius the veteran asked for.
+RADIUS_BUFFER_MILES = 5.0
+# Cap on "Related programs" schools per search: each one costs a live VA API
+# call to enrich its card, and past this many the section stops advising and
+# starts burying the exact matches.
+RELATED_FACILITY_LIMIT = 15
+
 # The system prompt already tells the model to call find_va_programs directly
 # for a named-program/trade search, skipping search_occupations/get_occupation
 # as a prerequisite -- but in practice the model still sometimes resolves an
@@ -69,6 +82,9 @@ def wants_named_program_search(message: str, selected_occupation: dict[str, str]
 # Deliberately excludes the bare pronoun "us" ("show us...", "near us...")
 # from the country references -- far too common in ordinary phrasing to use
 # as a signal, unlike "usa" or the punctuated abbreviation "u.s.".
+# Above this many programs, a "list every program" reply summarizes instead of
+# retyping each name; the school's card shows the complete list.
+FULL_LIST_REPLY_LIMIT = 40
 NATIONWIDE_SCOPE_HINTS = re.compile(r"\bnationwide\b|\bnation\s*-?\s*wide\b", re.I)
 NATIONWIDE_QUALIFIER_WORDS = re.compile(r"\b(?:entire|whole|all|every)\b", re.I)
 COUNTRY_REFERENCE_WORDS = re.compile(
@@ -89,12 +105,13 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "search_occupations",
-            "description": "Search O*NET occupations by a user's work goal, tasks, interests, or job title. Use this before choosing an occupation unless a current selected occupation still matches the user's goal.",
+            "description": "Search O*NET occupations by a user's work goal, tasks, interests, or job title. Also resolves a military job code (Army MOS, Air Force AFSC, Navy rating/NEC, Marine Corps MOS, Space Force code) directly to its matching civilian occupation(s) -- pass the code as-is, no need to expand it into words first. Use this before choosing an occupation unless a current selected occupation still matches the user's goal.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Concrete work goal or tasks, preserving the user's words."},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 5, "default": 5},
+                    "bright_outlook_only": {"type": "boolean", "default": False, "description": "Set true when the user asks for high-demand, growing, in-demand, or 'Bright Outlook' jobs. Widens the search and returns only occupations O*NET flags as Bright Outlook (projected rapid growth, many openings, or a new/emerging field)."},
                 },
                 "required": ["query"],
             },
@@ -116,7 +133,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "get_related_occupations",
-            "description": "Get O*NET-related occupations. Use only when the user explicitly asks for alternatives or agrees to broaden the occupation; never use merely because local results are empty.",
+            "description": "Get O*NET-related occupations. Use only when the user explicitly asks for alternatives or agrees to broaden the occupation (asking for high-demand/growing/Bright Outlook jobs 'related to' a military code or interest counts as this), never merely because local results are empty.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -195,10 +212,16 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "get_va_facility",
-            "description": "Find one previously named VA-approved provider by exact facility code or institution name and attach its official VA detail-page link. Use for follow-ups asking for a provider link or details.",
+            "description": "Find one previously named VA-approved provider by exact facility code or institution name and attach its official VA detail-page link. Use for follow-ups asking for a provider link or details, or to list every VA-approved program at one already-named school.",
             "parameters": {
                 "type": "object",
-                "properties": {"query": {"type": "string", "description": "Facility code or full provider name."}},
+                "properties": {
+                    "query": {"type": "string", "description": "Facility code or full provider name."},
+                    "full_program_list": {
+                        "type": "boolean",
+                        "description": "True when the user explicitly asked to see all/every/the full list of this school's VA-approved programs (not just examples or a relevant sample). Returns every program in each category instead of a 6-item sample, which can be long.",
+                    },
+                },
                 "required": ["query"],
             },
         },
@@ -241,16 +264,60 @@ class JarvetTools:
         self.training_facilities: list[dict[str, Any]] = []
         self.provider_context = provider_context
         self.nationwide_requested = nationwide_requested
+        # The schools the latest find_va_programs call returned, for
+        # arrange_listings() -- see there.
+        self.listed_facilities: dict[str, list[dict[str, Any]]] = {}
 
     def _add_resource(self, resource: dict[str, Any]) -> None:
+        # VA's insturl / vet_tuition_policy_url fields are often stored
+        # without a scheme ("www.wgu.edu/"), which a browser treats as a
+        # path relative to this site rather than an external link.
+        url = str(resource.get("url") or "").strip()
+        if url and not re.match(r"^[a-z][a-z0-9+.-]*:", url, re.IGNORECASE):
+            resource = {**resource, "url": "https://" + url.lstrip("/")}
         if resource.get("url") and all(
             (item["url"], item["label"]) != (resource["url"], resource["label"])
             for item in self.resources
         ):
             self.resources.append(resource)
 
+    def _related_programs(
+        self, matched_fields: list[str], matched_facility_codes: set[str], *,
+        state: str | None, latitude: float | None, longitude: float | None,
+        max_miles: float | None,
+    ) -> list[dict[str, Any]]:
+        """Schools outside the exact results with programs in the same or a
+        closely related field of study -- same field catches titles that
+        never use the search words (a "data" search finding "BUSINESS
+        ANALYTICS"), related fields come from careers the fields share in the
+        CIP-to-SOC crosswalk (Data Science -> Computer Science, IT)."""
+        fields: dict[str, dict[str, Any]] = {}
+        for cip in matched_fields:
+            fields[cip] = {
+                "title": self.ipeds.cip_titles.get(cip, cip), "overlap": 1.0,
+                "shared_careers": sorted(self.ipeds.field_careers.get(cip, set())),
+            }
+            for related in self.ipeds.related_fields(cip, limit=6):
+                if related["overlap"] > fields.get(related["cip"], {}).get("overlap", 0):
+                    fields[related["cip"]] = related
+        facilities = self.va.programs_in_fields(
+            fields, exclude_facilities=matched_facility_codes, state=state,
+            latitude=latitude, longitude=longitude, max_miles=max_miles,
+            limit=RELATED_FACILITY_LIMIT,
+        )
+        for facility in facilities:
+            careers = []
+            for title in facility["related_fields"]:
+                cip = next((code for code, item in fields.items() if item["title"] == title), None)
+                for soc in fields.get(cip, {}).get("shared_careers", []):
+                    career = self.onet.occupation_title(soc)
+                    if career and career not in careers:
+                        careers.append(career)
+            facility["related_careers"] = careers[:3]
+        return facilities
+
     async def _add_provider_resource(
-        self, facility: dict[str, Any], group: str | None = None,
+        self, facility: dict[str, Any], group: str | None = None, full_programs: bool = False,
     ) -> dict[str, Any]:
         # A facility that reached here via find_va_programs already has its
         # genuinely matched program(s) confirmed by that search's own
@@ -264,6 +331,7 @@ class JarvetTools:
         }
         details = await self.va.provider_details(
             str(facility["facility_code"]), self.provider_context, required=required,
+            full=full_programs,
         )
         merged = {**facility, **(details or {})}
         if "estimated_housing_allowance" in merged:
@@ -306,6 +374,14 @@ class JarvetTools:
                 "group": group or str(facility["institution"]).title(),
                 "action": "Apply",
             })
+        if merged.get("veteran_tuition_policy_url"):
+            self._add_resource({
+                "label": f"{facility['institution']}'s page for veterans and military students",
+                "url": merged["veteran_tuition_policy_url"],
+                "kind": "school-website",
+                "group": group or str(facility["institution"]).title(),
+                "action": "Veterans Page",
+            })
         return merged
 
     def _location_error(self, location: str) -> dict[str, Any]:
@@ -320,7 +396,10 @@ class JarvetTools:
     async def call(self, name: str, arguments: dict[str, Any]) -> Any:
         if name == "search_occupations":
             limit = max(1, min(int(arguments.get("limit", 5)), 5))
-            results = self.onet.search(str(arguments.get("query", "")), limit)
+            results = self.onet.search(
+                str(arguments.get("query", "")), limit,
+                bright_outlook_only=bool(arguments.get("bright_outlook_only", False)),
+            )
             self.matches = results
             return results
 
@@ -338,7 +417,7 @@ class JarvetTools:
                 return {"error": "Unknown O*NET-SOC code."}
             limit = max(1, min(int(arguments.get("limit", 5)), 8))
             return [
-                {key: item[key] for key in ("code", "title", "description")}
+                {key: item[key] for key in ("code", "title", "description", "bright_outlook")}
                 for item in self.onet.related_results(occupation, limit)
             ]
 
@@ -442,10 +521,11 @@ class JarvetTools:
             if provider_type == "employer" and not keywords:
                 return {"error": "Employer searches require occupation-relevant keywords."}
             radius = max(5.0, float(arguments.get("radius_miles", 50)))
+            search_radius = radius + RADIUS_BUFFER_MILES
             limit = max(1, min(int(arguments.get("limit", 6)), 8))
             facilities = self.va.search_nearby(
                 location["latitude"], location["longitude"], keywords,
-                employer=provider_type == "employer", limit=limit, max_miles=radius,
+                employer=provider_type == "employer", limit=limit, max_miles=search_radius,
             )
             fallback: list[dict[str, Any]] = []
             if provider_type == "employer" and not facilities:
@@ -454,7 +534,7 @@ class JarvetTools:
                 # concluding nothing exists.
                 fallback = self.va.search_nearby(
                     location["latitude"], location["longitude"], keywords,
-                    employer=False, limit=limit, max_miles=radius,
+                    employer=False, limit=limit, max_miles=search_radius,
                 )
                 for facility in fallback:
                     facility["fallback_note"] = (
@@ -463,7 +543,7 @@ class JarvetTools:
                     )
             if provider_type == "employer" and not fallback:
                 fallback = self.va.nearest_ojt_providers(
-                    location["latitude"], location["longitude"], limit=4, max_miles=radius,
+                    location["latitude"], location["longitude"], limit=4, max_miles=search_radius,
                 )
             self._add_resource(self.official_resources["compare"])
             merged_facilities = await asyncio.gather(*(
@@ -574,7 +654,10 @@ class JarvetTools:
             radius_raw = arguments.get("radius_miles")
             offset_raw = arguments.get("offset", 0)
             try:
-                max_miles = max(5.0, float(radius_raw)) if radius_raw is not None else None
+                max_miles = (
+                    max(5.0, float(radius_raw)) + RADIUS_BUFFER_MILES
+                    if radius_raw is not None else None
+                )
                 offset = max(0, int(offset_raw))
             except (TypeError, ValueError):
                 # A malformed radius_miles/offset from the model would
@@ -592,6 +675,17 @@ class JarvetTools:
             result = self.va.programs_for(
                 program, state=state, limit=page_limit, offset=offset,
                 latitude=latitude, longitude=longitude, max_miles=max_miles,
+            )
+            matched_facility_codes = set(result.pop("_matched_facility_codes", []))
+            matched_fields = result.pop("_matched_fields", [])
+            # Related programs are a first-page addition only; a "show more"
+            # continuation pages through the exact matches alone.
+            related_facilities = (
+                self._related_programs(
+                    matched_fields, matched_facility_codes, state=state,
+                    latitude=latitude, longitude=longitude, max_miles=max_miles,
+                )
+                if offset == 0 else []
             )
             # Live-enrich every matched facility (housing rate, GI Bill
             # student count, contact) concurrently. This means one live VA
@@ -632,11 +726,45 @@ class JarvetTools:
                     "group": str(facility["institution"]).title(),
                     "action": "Unverified school link",
                 })
+            # Enriched after the exact matches so their cards come first and
+            # the related cards follow under their own "Related programs"
+            # heading (see renderResources in app/static/app.js).
+            related_facilities = await asyncio.gather(*(
+                self._add_provider_resource(facility) for facility in related_facilities
+            ))
+            self.listed_facilities = {
+                "main": list(result["facilities"]), "related": list(related_facilities),
+            }
             has_semantic_matches = any(
                 facility.get("match_type") == "semantic" for facility in result["facilities"]
             )
             return {
                 **result,
+                "related_facilities": related_facilities,
+                # The model once moved exact matches that sat just past the
+                # requested radius into its own "Related programs just outside
+                # 20 miles" section and dropped the real related schools from
+                # the text entirely -- so spell out both sections' exact line
+                # counts and the related schools by name.
+                "related_note": (
+                    f"Your reply has exactly two lists. LIST 1: exactly {len(result['facilities'])} "
+                    "'• ' lines, one per entry in facilities (the exact matches), all under your "
+                    "opening sentence -- every one of them belongs in LIST 1 whatever its "
+                    "distance_miles; never split any of them off into another section. LIST 2: "
+                    "after LIST 1, a line reading exactly 'Related programs', then one plain "
+                    "sentence saying these are other approved schools in closely related fields "
+                    "that lead to similar jobs, then exactly "
+                    f"{len(related_facilities)} '• ' lines, one per entry in related_facilities, "
+                    "in this order: "
+                    + "; ".join(str(item["institution"]).title() for item in related_facilities)
+                    + ". Each LIST 2 line gives the school, city"
+                    + (", distance" if location_label else "")
+                    + ", its related program name(s) from matching_programs, and why it is "
+                    "related in plain words from related_careers (for example 'also leads to jobs "
+                    "like Software Developer'). related_facilities are NOT matches for the search "
+                    "words and are NOT counted in total_facilities; never call them matches."
+                ) if related_facilities else "",
+
                 "location": location_label or ("statewide" if state else "nationwide"),
                 "note": (
                     (
@@ -648,18 +776,25 @@ class JarvetTools:
                         "than an exact program-title match. "
                         if has_semantic_matches else ""
                     ) +
+                    "The facilities list below already contains every matched result for this "
+                    "page, not a preview or a curated sample -- your reply MUST name every "
+                    "single one of them as its own '• ' bulleted line, in the order given, with "
+                    "zero omitted, even when that is dozens of lines long. If you were given, "
+                    "say, 68 facilities here, your reply must contain exactly 68 bulleted "
+                    "lines, one per institution -- never write 'here are some examples,' "
+                    "'notable examples,' 'a few highlights,' or any other phrasing that implies "
+                    "a subset: that is a direct violation of this instruction regardless of how "
+                    "long the full list is. The frontend auto-links each institution name "
+                    "mentioned in your text to its own resource, so omitting a name from the "
+                    "text loses that link even though its card still appears below. "
                     "These are exact-name VA-approved facilities with at least one matching "
                     "IHL or NCD program in VA's own catalog. total_facilities is the exact, "
                     "precisely known count; open your reply with that exact number (for "
                     "example 'Found 25 VA-approved diver programs') rather than a vague "
-                    "quantifier like several, many, or multiple. Name every single result in "
-                    "your reply by institution name -- do not summarize as 'some' or 'notable "
-                    "examples' and truncate the list; the frontend auto-links each institution "
-                    "name mentioned in your text to its own resource, so omitting a name from "
-                    "the text loses that link even though its card still appears below. List three "
-                    "or more institutions as separate '• ' bulleted lines, one per line, never as one "
-                    "run-on paragraph. If total_facilities exceeds the number of results actually "
-                    "returned here, say how many more exist beyond those named. Only when "
+                    "quantifier like several, many, or multiple. If total_facilities exceeds "
+                    "the number of results actually returned here, say how many more exist "
+                    "beyond those named -- but every result that WAS returned here still gets "
+                    "its own line regardless. Only when "
                     "remaining_facilities is above 0, end your reply by offering to show more, and "
                     "include a suggestion whose value asks to see the next batch (for example 'Show "
                     "50 more marketing programs'); if the user picks it or asks for more, call "
@@ -671,7 +806,13 @@ class JarvetTools:
                         "Results are ranked by distance from " + str(location_label) + "; each "
                         "facility's distance_miles is the actual distance, and a radius_miles cutoff "
                         "already excluded anything farther, so never claim a result is within a "
-                        "range wider than what was actually requested. Facilities with no usable "
+                        "range wider than what was actually requested. A few results may sit a "
+                        "little past the requested radius on purpose, since a city's center point "
+                        "is only approximate: list them like every other result, never drop them "
+                        "for being slightly over, and never mention a buffer or extra miles. "
+                        "Give each school's distance on its line, rounded to one decimal "
+                        "(for example 'Stanford University, Stanford - 4.3 miles'). "
+                        "Facilities with no usable "
                         "coordinates on file could not be placed and are excluded from this scope, "
                         "not confirmed absent from the area."
                         if location_label else
@@ -688,7 +829,27 @@ class JarvetTools:
             facility = self.va.find_facility(str(arguments.get("query", "")))
             if facility is None:
                 return {"error": "No approved VA facility matched that name or code."}
-            merged = await self._add_provider_resource(facility)
+            full_programs = bool(arguments.get("full_program_list"))
+            merged = await self._add_provider_resource(facility, full_programs=full_programs)
+            program_count = sum(
+                len(summary.get("programs") or [])
+                for summary in merged.get("program_summaries") or []
+            )
+            # A big school's complete list (USC has ~977 programs) is far too
+            # long for the model to retype: it took ~10 minutes and silently
+            # dropped and altered names. The school's card already renders
+            # every program exactly as VA lists them (with a filter box), so
+            # the model only gets a short sample plus the exact totals.
+            long_full_list = full_programs and program_count > FULL_LIST_REPLY_LIMIT
+            facility_for_model = merged
+            if long_full_list:
+                facility_for_model = {
+                    **merged,
+                    "program_summaries": [
+                        {**summary, "programs": (summary.get("programs") or [])[:8]}
+                        for summary in merged.get("program_summaries") or []
+                    ],
+                }
             if merged.get("website"):
                 group_name = str(merged["institution"]).title()
                 self._add_resource({
@@ -732,14 +893,39 @@ class JarvetTools:
                     "action": "Unverified school link",
                 })
             return {
-                "facility": merged,
+                "facility": facility_for_model,
                 "source": "VA GI Bill Comparison Tool",
                 "note": (
                     "This official detail page verifies the facility record. Contact and "
                     "current program availability may still require provider confirmation. "
                     "A guessed_website was found by web search, not confirmed by VA -- never "
                     "state it as the school's website or say VA confirms it; call it an "
-                    "unverified possible website the person should confirm themselves."
+                    "unverified possible website the person should confirm themselves. " + (
+                        f"The user asked for this school's complete program list, and it has "
+                        f"{program_count} VA-approved programs -- too many to type out. Do NOT "
+                        "list the programs one by one. Instead open with the exact total, give "
+                        "the exact count for each category using each program_summaries "
+                        "entry's 'total', name a few examples from the programs shown, and "
+                        "say the complete list of every approved program is shown right here "
+                        "in this chat, on the school's card below this message, where they can "
+                        "type in the card's filter box to find a specific program. Do not send "
+                        "them to the VA Comparison Tool or any other website for the list. "
+                        "Offer to check whether a specific program or field of study is offered."
+                        if long_full_list else
+                        "full_program_list was requested, so each program_summaries entry's "
+                        "programs list is now the COMPLETE list for that category (selection "
+                        "is 'all'), not a 6-item sample -- your reply MUST name every single "
+                        "program in every category as its own '• ' bulleted line (group by "
+                        "category with a heading), with zero omitted, even when that totals "
+                        "dozens of lines. Never write 'some examples,' 'a few highlights,' or "
+                        "any phrasing implying a subset when this flag is set."
+                        if full_programs else
+                        "Only a 6-item sample of this facility's programs is included per "
+                        "category (selection is 'relevant'/'sample'/'all' with 'total' as the "
+                        "real count) -- if the user asks to see every/all programs, call "
+                        "get_va_facility again with full_program_list set to true rather than "
+                        "claiming these 6 are the complete list."
+                    )
                 ),
             }
 
@@ -753,6 +939,110 @@ class JarvetTools:
             return resources
 
         return {"error": f"Unknown tool: {name}"}
+
+
+def _display_name(value: str) -> str:
+    """VA's all-caps names in title case, keeping small joining words lower
+    ("College of Alameda", not "College Of Alameda")."""
+    words = value.title().split(" ")
+    return " ".join(
+        word.lower() if position and word.lower() in {"of", "the", "and", "at", "in", "for", "on"} else word
+        for position, word in enumerate(words)
+    )
+
+
+def _listing_line(facility: dict[str, Any]) -> str:
+    parts = [_display_name(str(facility.get("institution") or ""))]
+    if facility.get("city"):
+        parts.append(_display_name(str(facility["city"])))
+    line = "• " + ", ".join(part for part in parts if part)
+    if facility.get("distance_miles") is not None:
+        line += f" - {float(facility['distance_miles']):.1f} miles"
+    return line
+
+
+RELATED_HEADING = re.compile(r"^\W*related programs\b", re.IGNORECASE)
+
+
+def arrange_listings(message: str, listed: dict[str, list[dict[str, Any]]]) -> str:
+    """Make the reply's school lists match what find_va_programs returned.
+
+    The note tells the model to write every exact match in one list and
+    every related school under a 'Related programs' heading, yet in testing
+    it still dropped schools (17 of 19 matches listed for a Redwood City
+    "data" search, omitting College of Alameda and San Francisco State) and
+    filed related schools (Academy of Art, Santa Clara University) among the
+    exact matches -- while the cards below were right. The written list is
+    what veterans read and count, so it's rebuilt here from the model's own
+    lines: each school's line goes to its correct section in result order,
+    a plain line is added for any school the model left out, and any other
+    text is kept where it was.
+    """
+    if not message or not (listed.get("main") or listed.get("related")):
+        return message
+
+    def normalized(value: str) -> str:
+        return " ".join(re.findall(r"[a-z0-9]+", value.lower()))
+
+    # Longest names first so "University of California San Francisco" isn't
+    # claimed by a shorter name that happens to appear inside it.
+    names = sorted(
+        (
+            (normalized(str(facility.get("institution") or "")), kind, position)
+            for kind in ("main", "related")
+            for position, facility in enumerate(listed.get(kind) or [])
+        ),
+        key=lambda item: -len(item[0]),
+    )
+    lines = message.split("\n")
+    bullets = [index for index, line in enumerate(lines) if line.lstrip().startswith("•")]
+    heading_at = next(
+        (index for index, line in enumerate(lines) if RELATED_HEADING.match(line.strip())), None,
+    )
+    anchors = bullets + ([heading_at] if heading_at is not None else [])
+    start = min(anchors) if anchors else len(lines)
+    end = max(anchors) if anchors else len(lines) - 1
+    prefix, suffix = lines[:start], lines[end + 1:]
+
+    placed: dict[str, dict[int, str]] = {"main": {}, "related": {}}
+    unmatched: dict[str, list[str]] = {"main": [], "related": []}
+    extra: dict[str, list[str]] = {"main": [], "related": []}
+    related_intro: list[str] = []
+    heading_line = "Related programs"
+    section = "main"
+    related_bullet_seen = False
+    for index in range(start, end + 1):
+        line = lines[index]
+        if index == heading_at:
+            section, heading_line = "related", line.strip()
+            continue
+        if line.lstrip().startswith("•"):
+            related_bullet_seen = related_bullet_seen or section == "related"
+            text = normalized(line)
+            match = next((item for item in names if item[0] and item[0] in text), None)
+            if match is None:
+                unmatched[section].append(line)
+            else:
+                placed[match[1]].setdefault(match[2], line)
+        elif line.strip():
+            if section == "related" and not related_bullet_seen:
+                related_intro.append(line)
+            else:
+                extra[section].append(line)
+
+    def section_lines(kind: str) -> list[str]:
+        return [
+            placed[kind].get(position) or _listing_line(facility)
+            for position, facility in enumerate(listed.get(kind) or [])
+        ] + unmatched[kind] + extra[kind]
+
+    output = [*prefix, *section_lines("main")]
+    related = section_lines("related")
+    if related:
+        output += ["", heading_line, *related_intro, *related]
+    if suffix and suffix[0].strip():
+        output.append("")
+    return "\n".join(output + suffix)
 
 
 async def run_agent(
@@ -780,6 +1070,10 @@ Operating principles:
 - Preserve the current selected occupation unless the user clearly changes career goals. If they do, search and then call get_occupation for the best supported match.
 - When search_occupations returns several plausible matches, do not silently pick one. Present the top matches with one-line distinctions and let the user choose, unless one is an obviously exact match for the user's words. A user who said "fix cars" means automotive work; if the best match is not automotive, say why and offer the automotive match.
 - Treat spelling errors and conversational wording intelligently. Search by concrete work tasks when a title is unclear.
+- When a search_occupations result carries military_match, treat it as a confirmed selection, not one of several guesses to let the user pick from -- it came from an official military-to-civilian crosswalk, not a text search. Tell them which branch and military title it came from, call get_occupation on the matched code to see its education/job zone requirements, and in the same reply proactively look up matching degree or certificate programs (find_local_training or find_va_programs, nationwide if no location is known yet). Do not stop at describing the occupation and asking whether they want programs -- the user asked how to get there, not just what the job is. If more than one civilian occupation was matched, lead with the most fitting one and mention the others as alternatives.
+- The first time in a conversation you mention a Bright Outlook / high-demand / growing occupation, explain in one plain-language clause what that means (O*NET projects the field will grow quickly, add many openings, or is a new/emerging field) -- never use the label "Bright Outlook" on its own without that explanation, since most users have never heard the term.
+- When the user asks for high-demand/growing/Bright Outlook jobs tied to a military code or interest, call search_occupations with bright_outlook_only true. If that yields nothing (the exact military-code match is not itself Bright Outlook), call get_related_occupations on the matched code and keep only results with a non-empty bright_outlook, presenting them as related high-demand options rather than the exact match. Once you have the qualifying occupation(s), proactively look up matching degree/training programs for each (find_local_training or find_va_programs) rather than stopping at the occupation list -- the user asked for degrees, not just job titles.
+- "My MOS" (or similar shorthand) refers to the user's own military job code, not a literal search term. If a request mentions it but no code is on file yet and none was given in this message, ask for the code before calling search_occupations -- never search using words like "MOS," "high demand," or "my interests" themselves, since they are not real occupation or search terms and will return meaningless matches.
 - Accept city/state, region, or ZIP. "Near me" means the known profile location. Never interpret pronouns as state abbreviations and never demand a ZIP when a named area is known.
 - When the user names a place that is not a city or state (a region, landmark, or area such as Lake Tahoe), resolve the nearest well-known city or the containing state, say which anchor you used, and search from there. Never silently substitute a different location from the profile.
 - Honor scope requests literally. If the user asks for nationwide results or clicks a nationwide suggestion, call find_local_training with scope nationwide and report results from the whole country. Never answer a nationwide request with local results.
@@ -790,6 +1084,7 @@ Operating principles:
 - Treat OJT, apprenticeships, and other paid training as one family: a user asking for OJT is also asking about apprenticeships, and vice versa. One find_va_facilities employer search covers both; never tell the user you have not checked apprenticeships after an OJT search, or run a second search just for them. VA lists apprenticeships inside its OJT program data and Jarvet labels each program as an apprenticeship or on-the-job training in the provider card.
 - When an employer search returns no name matches, the tool result includes nearest_ojt_providers: the closest approved providers of either type regardless of name. Many sponsors have generic names (trust funds, JATCs, joint apprenticeship councils), and specialized trade schools such as diving academies are school providers rather than employers, so a name miss does not mean no training exists. Inspect each fallback provider's program_summaries for the user's trade before concluding nothing is available. Present relevant fallback providers as leads to verify, clearly saying their names did not mention the trade but their approved programs might include it. Only say an area has no training options after checking both the fallback list and the program summaries.
 - Every recommended VA facility must have its official facility-detail resource attached. For a follow-up asking for a provider's link, call get_va_facility instead of returning only a general VA page.
+- When the user asks to see all/every VA-approved program at one already-named school (no trade or keyword given, e.g. "list all VA approved programs at San Jose City College"), call get_va_facility with that school's name AND full_program_list set to true -- without that flag its result only includes a short 6-item sample per category, not the complete inventory. Do not call find_va_programs for this and do not ask the user for a trade/program keyword first: a keyword is only needed to search across schools, not to list one already-identified school's own catalog.
 - School links point to the institution's own website (its homepage or wherever it was already found), not a page confirmed to be specifically about the matched program -- Jarvet no longer crawls each school's site looking for a dedicated program page, since that was slow and often wrong. Never claim a school link goes directly to program-specific details.
 - Local training results may also include a va_facility matched to that exact school. Present its official VA Comparison Tool resource alongside the program resource. Do not substitute an unrelated nearby VA-approved school when exact program-school VA matches are available.
 - When naming specific programs or providers in the final answer, mention only results that have an attached resource. Keep the shortlist focused rather than listing unlinked results returned by a tool.
@@ -854,6 +1149,7 @@ Preserve valid profile facts, update direct user corrections, and do not infer s
                     "selected_occupation": tools.selected,
                     "resolved_location": tools.resolved_location,
                     "location_candidates": tools.location_candidates,
+                    "listed_facilities": tools.listed_facilities,
                 }
             for tool_call in tool_calls:
                 function = tool_call.get("function", {})
@@ -887,4 +1183,5 @@ Preserve valid profile facts, update direct user corrections, and do not infer s
             "selected_occupation": tools.selected,
             "resolved_location": tools.resolved_location,
             "location_candidates": tools.location_candidates,
+            "listed_facilities": tools.listed_facilities,
         }

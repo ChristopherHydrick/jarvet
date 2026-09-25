@@ -31,6 +31,7 @@ PROGRAM_LABELS = {
     "IHL": "Degree programs",
     "NCD": "Certificate and non-college programs",
     "OJT": "On-the-job training and apprenticeships",
+    "FLGT": "Flight training programs",
 }
 PROGRAM_STOP_WORDS = {
     "about", "and", "career", "certificate", "degree", "find", "for", "from",
@@ -134,6 +135,25 @@ RETRIEVAL_TERM_SYNONYMS: dict[str, set[str]] = {
 # RETRIEVAL_TERM_SYNONYMS for that term -- same shape as
 # DIVERSITY_FALSE_POSITIVE_MARKERS above, but keyed per term since each
 # synonym pair can have its own unrelated-credential collision.
+# A credential that VA program titles name in several unrelated wordings,
+# none of which a word-by-word search can bridge: "CNA" only finds the
+# handful of titles that literally include the acronym, and "certified
+# nursing assistant" requires "certified", which most titles ("NURSE
+# ASSISTANT", "NURSE AIDE-HOME HEALTH AIDE", "NURSING ASSISTING TRAINING
+# PROGRAM") leave out -- a California CNA search returned 4 or 13 of the 28
+# approved schools depending on phrasing. When the query itself names one of
+# these credentials, retrieval switches to the credential's own FTS query and
+# title pattern instead of the per-word match. \bcna\b never matches Cisco's
+# "CCNA", which only contains the letters.
+CREDENTIAL_CONCEPTS: list[dict[str, Any]] = [
+    {
+        "query": re.compile(
+            r"\bcnas?\b|\bnurs\w*\s+(assist\w*|aides?)\b|\bnurse\s*aides?\b", re.I,
+        ),
+        "fts": '("nurs"* AND ("assist"* OR "aid"*)) OR "cna"*',
+        "title": re.compile(r"\bcnas?\b|\bnurs\w*\s+(assist\w*|aides?)\b", re.I),
+    },
+]
 FIELD_EXPANSION_FALSE_POSITIVE_MARKERS: dict[str, set[str]] = {
     "pilot": {"attendant", "engineering"},
     "flight": {"attendant", "engineering"},
@@ -256,7 +276,7 @@ class VaComparison:
 
     async def provider_details(
         self, facility_code: str, context: str = "", *, ttl_seconds: int = 7 * 24 * 60 * 60,
-        required: set[str] | None = None,
+        required: set[str] | None = None, full: bool = False,
     ) -> dict[str, Any] | None:
         payload = await self._provider_payload(facility_code, ttl_seconds)
         if payload is None:
@@ -319,16 +339,24 @@ class VaComparison:
             ]
             required_descriptions = {item[2] for item in required_items}
             remaining = [item for item in matches if item[2] not in required_descriptions]
+            cap = None if full else 6  # list[:None] is the whole list -- "show all" asked for it.
             chosen = (
                 required_items + sorted(remaining, key=lambda item: (-item[0], item[1]))
-            )[:6]
+            )[:cap]
             selection = "relevant"
             if not terms and not required_items:
-                chosen = ranked[:6]
+                chosen = ranked[:cap]
                 selection = "all"
             elif not chosen:
-                chosen = ranked[:6]
+                chosen = ranked[:cap]
                 selection = "sample"
+            if full:
+                # cap is None above, so chosen already IS every program in
+                # this category regardless of which branch set it -- "sample"
+                # would wrongly tell the frontend to show its "no close title
+                # match" caveat on what's actually the complete VA list.
+                chosen = ranked
+                selection = "all"
             summaries.append({
                 "type": code,
                 "label": PROGRAM_LABELS.get(code, f"{code} programs"),
@@ -889,7 +917,23 @@ class VaComparison:
         facility_cache: dict[str, sqlite3.Row | None] = {}
         distance_cache: dict[str, float | None] = {}
 
-        def _pipeline(*, require_all: bool) -> list[dict[str, Any]]:
+        def _pipeline(
+            *, require_all: bool, concept: dict[str, Any] | None = None,
+        ) -> list[dict[str, Any]]:
+            if concept is not None:
+                return _group(
+                    [
+                        row for row in database.execute(
+                            "SELECT facility_code, program_type, description, "
+                            "bm25(va_program_search) AS rank FROM va_program_search "
+                            "WHERE va_program_search MATCH ? ORDER BY rank",
+                            (concept["fts"],),
+                        ).fetchall()
+                        if concept["title"].search(row[2])
+                        and (row[0], row[2]) not in KNOWN_FALSE_POSITIVE_PROGRAMS
+                    ],
+                    require_all=True,
+                )
             match_query = (
                 " AND ".join(
                     "(" + " OR ".join(f'"{variant}"*' for variant in variants) + ")"
@@ -935,7 +979,9 @@ class VaComparison:
                     row for row in rows
                     if not any(marker in row[2].lower() for marker in expansion_markers)
                 ]
+            return _group(rows, require_all=require_all)
 
+        def _group(rows: list[Any], *, require_all: bool) -> list[dict[str, Any]]:
             grouped: dict[str, dict[str, Any]] = {}
             for facility_code, program_type, description, rank in rows:
                 if facility_code not in facility_cache:
@@ -1072,7 +1118,10 @@ class VaComparison:
                 return sorted(grouped.values(), key=lambda item: (item["distance"], -item["best_score"]))
             return sorted(grouped.values(), key=lambda item: -item["best_score"])
 
-        ordered = _pipeline(require_all=True)
+        concept = next(
+            (item for item in CREDENTIAL_CONCEPTS if item["query"].search(keyword)), None,
+        )
+        ordered = _pipeline(require_all=True, concept=concept)
         # A plain-English multi-word trade query (e.g. "auto mechanic") can
         # legitimately return nothing near the searched location under a
         # strict all-terms-required search, because VA program titles often
@@ -1102,7 +1151,129 @@ class VaComparison:
             "offset": offset,
             "remaining_facilities": max(0, len(ordered) - offset - len(results)),
             "source": "VA GI Bill Comparison Tool approved program catalog",
+            # Internal, for the related-programs step in app/agent.py (which
+            # pops both before the result reaches the model): every matched
+            # school across all pages, and the fields of study the matches
+            # themselves belong to.
+            "_matched_facility_codes": [item["facility"]["facility_code"] for item in ordered],
+            "_matched_fields": self._dominant_fields([
+                (item["facility"]["facility_code"], program["description"])
+                for item in ordered for program in item["matching_programs"]
+            ]),
         }
+
+    # A program title's field of study (scripts/init-va-program-fields.py)
+    # is an AI match, right roughly 90% of the time in a hand review; below
+    # these scores the wrong matches dominated, so the program is treated as
+    # having no known field. A pick from the school's own federal (IPEDS)
+    # program list is more trustworthy than a nationwide one at the same score.
+    # Set for precision (a wrong "related" suggestion costs a veteran's trust;
+    # a missing one costs little): 0.74 still let Canada College's "BUSINESS
+    # ASSISTANT" through as Medical/Clinical Assistant. About 70% of programs
+    # clear these.
+    FIELD_MIN_SCORE = {"school": 0.75, "global": 0.78, "rule": 0.0}
+
+    def _has_program_fields(self) -> bool:
+        return self._database().execute(
+            "SELECT name FROM sqlite_master WHERE name = 'va_program_fields'"
+        ).fetchone() is not None
+
+    def _dominant_fields(self, programs: list[tuple[str, str]], limit: int = 3) -> list[str]:
+        """The field(s) of study most of the matched programs belong to --
+        e.g. Data Science and Data Analytics for a "data" search -- ignoring
+        fields only a stray match or two landed in."""
+        if not programs or not self._has_program_fields():
+            return []
+        database = self._database()
+        counts: dict[str, int] = {}
+        for facility_code, description in programs:
+            row = database.execute(
+                "SELECT cip, score, method FROM va_program_fields "
+                "WHERE facility_code = ? AND description = ?",
+                (facility_code, description),
+            ).fetchone()
+            if row and row[0] and row[1] >= self.FIELD_MIN_SCORE.get(row[2], 1):
+                counts[row[0]] = counts.get(row[0], 0) + 1
+        total = sum(counts.values())
+        ranked = sorted(counts.items(), key=lambda item: -item[1])
+        # 25%: a couple of mis-sorted matches (roughly 1 in 10 titles) must not
+        # pull in a field of their own -- two HVAC titles filed under Computer
+        # Installation and Repair made up 17% of a Phoenix HVAC search.
+        return [cip for cip, count in ranked[:limit] if total and count / total >= 0.25]
+
+    def programs_in_fields(
+        self, fields: dict[str, dict[str, Any]], *, exclude_facilities: set[str],
+        state: str | None = None, latitude: float | None = None,
+        longitude: float | None = None, max_miles: float | None = None, limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Approved programs whose field of study is one of fields (a CIP code
+        -> {"title", "overlap", ...} map from IpedsIndex.related_fields), at
+        schools not in exclude_facilities, within the same state/radius as
+        the main search. Closest (or most related) schools first."""
+        if not fields or not self._has_program_fields():
+            return []
+        database = self._database()
+        placeholders = ",".join("?" for _ in fields)
+        rows = database.execute(
+            "SELECT facility_code, description, cip, score, method, program_type "
+            f"FROM va_program_fields WHERE cip IN ({placeholders})",
+            tuple(fields),
+        ).fetchall()
+        by_distance = latitude is not None and longitude is not None
+        grouped: dict[str, dict[str, Any]] = {}
+        for facility_code, description, cip, score, method, program_type in rows:
+            if facility_code in exclude_facilities or score < self.FIELD_MIN_SCORE.get(method, 1):
+                continue
+            if facility_code not in grouped:
+                facility_row = database.execute(
+                    "SELECT * FROM facilities WHERE facility_code = ? AND approved = 1",
+                    (facility_code,),
+                ).fetchone()
+                if facility_row is None or (state and facility_row["state"] != state.upper()):
+                    grouped[facility_code] = None
+                    continue
+                distance = None
+                if by_distance:
+                    if facility_row["latitude"] is None or facility_row["longitude"] is None:
+                        grouped[facility_code] = None
+                        continue
+                    distance = _distance_miles(
+                        latitude, longitude, facility_row["latitude"], facility_row["longitude"],
+                    )
+                    if max_miles is not None and distance > max_miles:
+                        grouped[facility_code] = None
+                        continue
+                grouped[facility_code] = {
+                    "facility_row": facility_row, "distance": distance, "programs": [],
+                    "best_overlap": 0.0,
+                }
+            entry = grouped[facility_code]
+            if entry is None:
+                continue
+            entry["programs"].append({
+                "type": program_type, "description": description,
+                "related_field": fields[cip]["title"], "score": score,
+            })
+            entry["best_overlap"] = max(entry["best_overlap"], fields[cip].get("overlap", 0))
+        entries = [entry for entry in grouped.values() if entry]
+        if by_distance:
+            entries.sort(key=lambda entry: (entry["distance"], -entry["best_overlap"]))
+        else:
+            entries.sort(key=lambda entry: (-entry["best_overlap"], -len(entry["programs"])))
+        return [
+            {
+                **self._record(entry["facility_row"], entry["distance"]),
+                # Most confident field matches first, so the card's sample
+                # leads with the programs least likely to be mis-sorted.
+                "matching_programs": [
+                    {key: value for key, value in program.items() if key != "score"}
+                    for program in sorted(entry["programs"], key=lambda item: -item["score"])[:6]
+                ],
+                "matching_program_count": len(entry["programs"]),
+                "related_fields": sorted({program["related_field"] for program in entry["programs"]}),
+            }
+            for entry in entries[:limit]
+        ]
 
     def match_school(self, name: str) -> dict[str, Any] | None:
         normalized = re.sub(r"[^a-z0-9]+", " ", name.lower()).strip()
@@ -1140,6 +1311,18 @@ class VaComparison:
             ).fetchone()
             if apply:
                 apply_url, apply_label = apply
+        # VA's own veterans page link wins; otherwise fall back to one from the
+        # federal IPEDS college directory (VETURL), which is kept in its own
+        # table so scripts/init-va-data.py rebuilding facilities can't wipe it.
+        veteran_page_url = row["vet_tuition_policy_url"]
+        if not veteran_page_url and database.execute(
+            "SELECT name FROM sqlite_master WHERE name = 'va_veterans_page_guesses'"
+        ).fetchone() is not None:
+            veteran_page = database.execute(
+                "SELECT url FROM va_veterans_page_guesses WHERE facility_code = ?",
+                (row["facility_code"],),
+            ).fetchone()
+            veteran_page_url = veteran_page[0] if veteran_page else None
         return {
             "facility_code": row["facility_code"],
             "detail_url": (
@@ -1171,7 +1354,7 @@ class VaComparison:
             # works exactly as found.
             "apply_url": apply_url,
             "apply_label": apply_label,
-            "veteran_tuition_policy_url": row["vet_tuition_policy_url"],
+            "veteran_tuition_policy_url": veteran_page_url,
             "p911_recipients": row["p911_recipients"],
             "p911_tuition_fees": _number(row["p911_tuition_fees"]),
             "yellow_ribbon_recipients": row["p911_yr_recipients"],
