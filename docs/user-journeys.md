@@ -1,4 +1,19 @@
-# Jarvet critical user journeys (draft 2026-09-25, for the user's review)
+# Jarvet critical user journeys (approved 2026-09-25; journey 7 renamed "Housing Assistance")
+
+**Build status (2026-09-25):** journeys **1, 3, 5 and 8 are built** as guided
+questions (app/journeys.py, /api/journey, cards ALPHA, GOLF, DELTA/ECHO and the
+new HOTEL card "Other ways to pay for training"); journey 1 hands off to 8.
+Still to build: 2 (with the phase 2 calculator), 7 (with the phase 3 SSVF
+directory), 6, 4. Small changes made while building, versus the draft below:
+- Journey 1 service buttons follow VA's Post-9/11 tiers (90 days-6 months,
+  6-18, 18-24, 24-30, 30-36, 36+ months), and a follow-up "Have you used any of
+  your GI Bill before?" is asked when the service time qualifies (answers
+  "used it all" / "expired" also hand off to journey 8).
+- Journey 3 checks the job code against the military crosswalk; a description
+  ("combat medic") is accepted instead and the branch is asked.
+- Journey 8 skips the state question when the location already gave it, and the
+  Social Security question when the veteran said they have no health condition.
+- Every question after the first offers "Skip the rest of the questions".
 
 Eight journeys that show what Jarvet can do. Each one starts from a card on
 the landing page (or from the veteran's own words), asks only the questions it
@@ -111,7 +126,7 @@ Scholarship, DEA Chapter 35, state waiver) with who decides (DoD for transfer,
 VA for Fry/DEA), how to apply (current form), all cited.
 **Shows off:** benefits library, screening rules, forms, state table (later).
 
-## 7. "I need help getting stable" -- SSVF and HUD-VASH (new card: Housing and support services)
+## 7. Housing Assistance -- SSVF and HUD-VASH (new card: Housing Assistance)
 **Who:** veteran (and family) who is homeless, facing eviction, behind on rent or
 bills, or housed but struggling to stay that way. SSVF is **more than housing**:
 the journey covers the whole range of help, not only rent.
@@ -191,6 +206,11 @@ or anyone who wants to add non-VA money on top of VA benefits.
 without VA benefits, links to the school and training journeys.
 
 ## How each journey is checked
+Built (free, no model): `python scripts/check-counselor.py --no-app` runs the
+saved answer scripts in scripts/counselor-checks.json ("journeys") through the
+running app's /api/journey. The paid one-chat-per-journey check is not built
+yet (run only when the user says so).
+
 For every journey, a saved script of answers runs through the app: the free
 check confirms each question appears in order with its buttons and nothing
 already known is asked again; one chat run per journey (costs credits, run

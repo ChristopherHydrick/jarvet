@@ -243,9 +243,23 @@ journey forward; each journey gets its own automated check.
      costs (certifications, tools) for SSVF-eligible families.
    - "Other ways to pay for training" screening + journey 8, and journey 1
      branches to it; prompt rule: never stop at "you don't qualify".
-1b. [ ] **Guided journeys:** journey definitions + guided-question engine
+1b. [~] **Guided journeys:** journey definitions + guided-question engine
    (docs/user-journeys.md), starting with journeys 1, 3, 5 (data exists today),
    then 2 (with phase 2), 7 (with phase 3), 6.
+   - [x] Journeys approved by the user 2026-09-25 (journey 7 renamed "Housing
+     Assistance").
+   - [x] Engine (2026-09-25): app/journeys.py + POST /api/journey -- questions
+     asked by the app itself (no model, instant, free), typed answers matched
+     to buttons, places checked with the location resolver, typed questions go
+     to the chat and the journey resumes, safety check on every answer, answers
+     kept in the page only (never saved). A finished journey sends one composed
+     request to /api/chat with `first_tool` (e.g. find_help_without_va_benefits).
+     Journeys 1, 3, 5, 8 built; 1 hands off to 8; new card HOTEL.
+   - [x] Free checks: 8 journey cases in check-counselor.py --no-app.
+   - [ ] Paid check: one chat per finished journey (user's go needed); watch
+     that the model runs both searches for journey 1 (benefits + programs).
+   - [ ] Journeys 4, 6 (library data exists), 2 (phase 2), 7 (phase 3).
+   - [ ] Nice to have: "change my answer" button; state names spelled out.
    - [ ] Build out: more sources as later phases need them (studentaid.gov in
      phase 5, SSVF Program Guide in phase 3, VA Forms API).
 2. [ ] **GI Bill:** rate tables, "what would I get" calculator, estimate on

@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from app import safety
 from app.agent import arrange_listings, run_agent
 from app.benefits import BenefitsLibrary, fastembed_reranker
+from app.journeys import FIRST_TOOLS, JOURNEYS, JourneyEngine
 from app.state_help import StateHelp
 from app.cache import ResponseCache
 from app.ipeds import IpedsIndex
@@ -36,6 +37,12 @@ benefits_library = BenefitsLibrary(
 # State vocational rehabilitation agencies + federal routes for veterans the
 # VA does not cover (data/state-vr-agencies.json).
 state_help = StateHelp()
+# Guided journeys (app/journeys.py): questions asked by the app itself, with
+# places checked by the program search's own location resolver.
+journey_engine = JourneyEngine(
+    va_index.resolve_location, va_index.location_candidates, state_help.state_code,
+    index.military_code_in,
+)
 response_cache = ResponseCache(
     ROOT / ".cache" / "chat-responses.sqlite",
     version=os.getenv("JARVET_CACHE_VERSION", "25"),
@@ -80,6 +87,18 @@ class ChatRequest(BaseModel):
     profile: dict[str, list[str]] = Field(default_factory=dict)
     selected_occupation: dict[str, str] | None = None
     saved_providers: list[SavedProvider] = Field(default_factory=list, max_length=12)
+    # Set by a finished guided journey: the tool the agent must call first.
+    first_tool: str | None = Field(default=None, max_length=60)
+
+
+class JourneyRequest(BaseModel):
+    journey: str = Field(max_length=40)
+    answers: dict[str, str] = Field(default_factory=dict)
+    asked: list[str] = Field(default_factory=list, max_length=30)
+    pending: str | None = Field(default=None, max_length=40)
+    text: str | None = Field(default=None, max_length=1000)
+    value: str | None = Field(default=None, max_length=200)
+    known_location: str | None = Field(default=None, max_length=120)
 
 
 PROFILE_FIELDS = (
@@ -281,6 +300,24 @@ def safety_only_reply(profile: dict[str, list[str]], concerns: list[str]) -> dic
     }
 
 
+@app.post("/api/journey")
+def journey_step(request: JourneyRequest):
+    """The next guided question (or the finished request for /api/chat).
+    No model call. A crisis or housing emergency in a typed answer still
+    brings up the help lines first (app/safety.py)."""
+    if request.journey not in JOURNEYS:
+        raise HTTPException(404, "Unknown journey.")
+    answers = {key[:40]: str(value)[:200] for key, value in list(request.answers.items())[:30]}
+    result = journey_engine.step(
+        request.journey, answers, request.asked, pending=request.pending,
+        text=request.text, value=request.value, known_location=request.known_location,
+    )
+    concerns = safety.check(request.text or "")
+    result["safety"] = safety.notices(concerns)
+    result["safety_text"] = safety.prefix(concerns) if concerns else ""
+    return result
+
+
 @app.post("/api/chat")
 async def chat(request: ChatRequest, response: Response):
     profile = clean_profile(request.profile, {})
@@ -314,6 +351,7 @@ async def chat(request: ChatRequest, response: Response):
             safety_notes=[safety.MODEL_NOTES[concern] for concern in concerns],
             benefits=benefits_library,
             state_help=state_help,
+            first_tool=request.first_tool if request.first_tool in FIRST_TOOLS else None,
         )
     except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as error:
         if concerns:

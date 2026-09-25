@@ -13,6 +13,11 @@
   state  -- the state vocational rehabilitation directory (app/state_help.py,
             data/state-vr-agencies.json) has all 78 agencies and finds the
             right ones for saved places. Free.
+  journeys- the guided journeys (app/journeys.py): saved answers are sent
+            to the running app's /api/journey one by one; each question must
+            come in order (with its buttons), nothing known is asked again, and
+            the finished request must name the right first tool and facts.
+            Free (no model); skipped if the app is not running.
   app    -- (skipped with --no-app) sends the safety_app messages to the
             running app and checks the reply starts with the help text and
             carries the call/chat/text buttons. Costs model credits.
@@ -125,6 +130,68 @@ def check_state_help(checks: dict) -> int:
     return failures
 
 
+def post_json(url: str, payload: dict, timeout: float = 30) -> dict:
+    request = urllib.request.Request(
+        url, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.load(response)
+
+
+def check_journeys(checks: dict, base_url: str) -> int:
+    try:
+        urllib.request.urlopen(f"{base_url.rstrip('/')}/api/health", timeout=10)
+    except OSError:
+        print("skip  journeys -- the app is not running")
+        return 0
+    failures = 0
+    for case in checks.get("journeys", []):
+        url = f"{base_url.rstrip('/')}/api/journey"
+        state = {"journey": case["journey"], "answers": dict(case.get("prefill", {})), "asked": [],
+                 "pending": None, "known_location": case.get("known_location")}
+        body = post_json(url, state)
+        problems = []
+        for number, step in enumerate(case["steps"], 1):
+            if body.get("kind") != "question":
+                problems.append(f"step {number}: got {body.get('kind')} instead of a question")
+                break
+            if body["pending"] != step["slot"]:
+                problems.append(f"step {number}: asked {body['pending']!r}, expected {step['slot']!r}")
+                break
+            if step.get("journey") and body["journey"] != step["journey"]:
+                problems.append(f"step {number}: journey {body['journey']}, expected {step['journey']}")
+            labels = [option["label"] for option in body.get("options", [])]
+            missing = [label for label in step.get("options", []) if label not in labels]
+            if missing:
+                problems.append(f"step {number}: buttons missing {missing}")
+            if step.get("note") and not any(step["note"] in note for note in body.get("notes", [])):
+                problems.append(f"step {number}: note {step['note']!r} missing")
+            state = {"journey": body["journey"], "answers": body["answers"], "asked": body["asked"],
+                     "pending": body["pending"], "text": step.get("text"), "value": step.get("value")}
+            body = post_json(url, state)
+        expect = case["expect"]
+        if not problems:
+            if body.get("kind") != expect["kind"]:
+                problems.append(f"ended with {body.get('kind')}, expected {expect['kind']}")
+            if "first_tool" in expect and body.get("first_tool") != expect["first_tool"]:
+                problems.append(f"first tool {body.get('first_tool')}, expected {expect['first_tool']}")
+            if expect.get("journey") and body.get("journey") != expect["journey"]:
+                problems.append(f"journey {body.get('journey')}, expected {expect['journey']}")
+            if expect.get("slot") and body.get("pending") != expect["slot"]:
+                problems.append(f"next question {body.get('pending')}, expected {expect['slot']}")
+            if expect.get("note") and not any(expect["note"] in note for note in body.get("notes", [])):
+                problems.append(f"note {expect['note']!r} missing")
+            if "safety" in expect and [n["kind"] for n in body.get("safety", [])] != expect["safety"]:
+                problems.append(f"safety {[n['kind'] for n in body.get('safety', [])]}, expected {expect['safety']}")
+            missing = [fact for fact in expect.get("request", []) if fact not in body.get("request", "")]
+            if missing:
+                problems.append(f"request missing {missing}")
+        failures += bool(problems)
+        print(f"{'ok  ' if not problems else 'FAIL'}  journey: {case['name']}"
+              + (f" -- {'; '.join(problems)}" if problems else ""))
+    return failures
+
+
 def check_app(checks: dict, base_url: str, timeout: float) -> int:
     failures = 0
     for case in checks["safety_app"]:
@@ -164,6 +231,7 @@ def main() -> int:
     failures = check_safety(checks)
     failures += check_state_help(checks)
     failures += check_library(checks)
+    failures += check_journeys(checks, args.app_url)
     if not args.no_app:
         failures += check_app(checks, args.app_url, args.timeout)
     print(f"\n{'All checks passed.' if not failures else f'{failures} check(s) failed.'}")

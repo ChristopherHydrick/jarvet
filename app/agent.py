@@ -1525,6 +1525,7 @@ async def run_agent(
     official_resources: dict[str, dict[str, str]],
     base_url: str, api_key: str, model: str, safety_notes: list[str] | None = None,
     benefits: BenefitsLibrary | None = None, state_help: StateHelp | None = None,
+    first_tool: str | None = None,
 ) -> dict[str, Any]:
     provider_context = " ".join([
         messages[-1]["content"] if messages else "",
@@ -1619,6 +1620,10 @@ Preserve valid profile facts, update direct user corrections, and do not infer s
     ) if force_program_search else (
         "search_benefits_info" if benefits_question else None
     )
+    # A finished guided journey (app/journeys.py) names the tool its composed
+    # request needs first, e.g. find_help_without_va_benefits for journey 8.
+    if first_tool:
+        forced_program_tool = first_tool
 
     async with httpx.AsyncClient(timeout=180) as client:
         for turn_index in range(8):

@@ -18,6 +18,11 @@ let selectedOccupation = null;
 let savedProviders = [];
 let directionRevision = 0;
 let activeChatController = null;
+// Guided journeys (app/journeys.py): the journey being asked, and the answers
+// given so far -- kept in this page only, shared across journeys so nothing is
+// asked twice, and never saved (discharge, rating, health, income).
+let journey = null;
+let journeyAnswers = {};
 
 function loadRememberedDirection() {
   try {
@@ -53,6 +58,8 @@ function resetDirectionState() {
   profile = {};
   selectedOccupation = null;
   savedProviders = [];
+  journey = null;
+  journeyAnswers = {};
   rememberDirection.checked = false;
   clearRememberedDirection();
   renderProfile();
@@ -96,15 +103,6 @@ const startingPoints = [
 ];
 
 const missionOpeners = {
-  "Help me get started finding an education or career path.": {
-    message: "Let's find your fastest path. First, do you currently have VA education benefits, such as the GI Bill or VR&E, that you may be eligible to use?",
-    suggestions: [
-      "Yes, I have GI Bill benefits",
-      "I have a disability rating / VR&E",
-      "I thought my GI Bill was gone",
-      "Not sure what I have",
-    ],
-  },
   "Help me understand how I can get paid to go to school.": {
     message: "Here are the main ways school may be funded:\n\n• Post-9/11 GI Bill can pay tuition directly to the school and may include a monthly housing allowance and book stipend.\n• Yellow Ribbon can help with tuition above the GI Bill cap at participating schools.\n• VR&E may fund training and provide a subsistence allowance for eligible Veterans with a service-connected disability.\n• If your GI Bill eligibility period ended, there may be circumstances where you can request an extension. Eligibility depends on your situation, so we'll verify the official path before you act.",
     suggestions: [
@@ -123,23 +121,6 @@ const missionOpeners = {
       "I want A+ certification",
     ],
   },
-  "Help me figure out what to study.": {
-    message: "We can work backward from a career goal, compare occupations using O*NET evidence, and then find matching degree or certificate programs by location. You do not need to know the school first.\n\nChoose an example below, or tell me where you live and what kind of work interests you.",
-    suggestions: [
-      "Marketing programs in San Jose",
-      "Nursing programs in Oakland",
-      "Welding certificates near me",
-      "Help me explore careers first",
-    ],
-  },
-  "I want an A+ computer technician certification.": {
-    message: "CompTIA A+ can be a direct route into entry-level IT support work. GI Bill or VR&E may fund approved training, some employers offer IT support apprenticeships or OJT, and eligible licensing or certification test fees may be reimbursable separately from tuition. WIOA may also fund short credentials for eligible job seekers.\n\nTell me your location and we'll find the most relevant route.",
-    suggestions: [
-      "Find A+ training programs near me",
-      "Find an IT apprenticeship instead",
-      "I don't have GI Bill benefits left",
-    ],
-  },
   "Help me understand education benefits for my family.": {
     message: "Several programs may support a spouse or child:\n\n• Transfer of Post-9/11 GI Bill benefits generally must be requested while you are still serving and may carry a service obligation.\n• The Fry Scholarship may support eligible children or surviving spouses of a service member who died in the line of duty.\n• Chapter 35 may support eligible dependents of a Veteran who is permanently and totally disabled due to service, or who died from a service-connected cause.\n• Some states offer dependent tuition waivers with their own residency and eligibility rules.",
     suggestions: [
@@ -149,13 +130,18 @@ const missionOpeners = {
       "Tell me about the Fry Scholarship",
     ],
   },
-  "Find degrees for high-demand jobs related to my MOS.": {
-    message: "What's your military job code -- Army MOS, Air Force AFSC, Navy rating/NEC, Marine Corps MOS, or Space Force code (for example 25U or 0311)?\n\nI'll match it to civilian careers O*NET projects will grow quickly or add a lot of openings, then find degree or certificate programs for them.",
-    suggestions: [
-      "I don't know my code",
-      "Search by interest instead",
-    ],
+};
+
+// Cards that start a guided journey instead of a fixed opener.
+const missionJourneys = {
+  "Help me get started finding an education or career path.": { id: "start" },
+  "Help me figure out what to study.": { id: "study" },
+  "I want an A+ computer technician certification.": {
+    id: "study",
+    prefill: { field: "CompTIA A+ computer technician certification", length: "short" },
   },
+  "Find degrees for high-demand jobs related to my MOS.": { id: "mos" },
+  "Show me other ways to pay for training.": { id: "other-ways" },
 };
 
 function appendLinkedText(element, content, resources) {
@@ -771,11 +757,16 @@ function showHome(event) {
   messages = [];
   messagesElement.replaceChildren();
   suggestionsElement.replaceChildren();
+  journey = null;
   welcomeInput.value = "";
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 function beginWithMission(content) {
+  if (missionJourneys[content]) {
+    beginJourney(missionJourneys[content]);
+    return;
+  }
   const opener = missionOpeners[content];
   if (!opener) {
     begin();
@@ -783,6 +774,111 @@ function beginWithMission(content) {
     return;
   }
   begin(opener);
+}
+
+function beginJourney(spec) {
+  welcome.hidden = true;
+  chat.hidden = false;
+  messages = [];
+  messagesElement.replaceChildren();
+  renderProfile();
+  Object.assign(journeyAnswers, spec.prefill || {});
+  journey = { id: spec.id, pending: null, asked: [] };
+  journeyStep({});
+}
+
+function renderJourneyQuestion(body, preface = "") {
+  const text = [preface, ...(body.notes || []), body.question].filter(Boolean).join("\n\n");
+  const element = addMessage("assistant", "", "journey-question");
+  const progress = document.createElement("span");
+  progress.className = "journey-progress";
+  progress.textContent = `Question ${body.progress.number} of ${body.progress.total}`;
+  element.append(progress, document.createTextNode(text));
+  if (body.why) {
+    const why = document.createElement("small");
+    why.className = "journey-why";
+    why.textContent = `Why I'm asking: ${body.why}`;
+    element.appendChild(why);
+  }
+  messages.push({ role: "assistant", content: text });
+  suggestionsElement.replaceChildren();
+  suggestionsElement.classList.add("journey-options");
+  const options = [...body.options];
+  if (body.asked.length > 1) options.push({ label: "Skip the rest of the questions", value: "__finish__" });
+  for (const option of options) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = option.label;
+    if (option.value === "__finish__") button.className = "journey-finish";
+    button.addEventListener("click", () => journeyStep({ label: option.label, value: option.value }));
+    suggestionsElement.appendChild(button);
+  }
+  messagesElement.scrollTop = messagesElement.scrollHeight;
+}
+
+// One step of a guided journey: send the answer (typed text, or a button's
+// value), then show the next question, hand a typed question to the chat
+// (off-script) and come back to the journey, or send the finished request.
+async function journeyStep({ text = null, value = null, label = null, preface = "" }) {
+  const shown = label || text;
+  if (shown) {
+    addMessage("user", shown);
+    input.value = "";
+    input.style.height = "auto";
+  }
+  suggestionsElement.replaceChildren();
+  const current = journey;
+  let body;
+  try {
+    const response = await fetch("/api/journey", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        journey: current.id,
+        answers: journeyAnswers,
+        asked: current.asked,
+        pending: current.pending,
+        text,
+        value,
+        known_location: (profile.location || []).at(-1) || null,
+      }),
+    });
+    body = await response.json();
+    if (!response.ok) throw new Error(body.detail || "Request failed");
+  } catch (error) {
+    addMessage("assistant", `I couldn't load the next question: ${error.message}`);
+    return;
+  }
+  if (journey !== current) return;
+  if (body.safety?.length) {
+    addMessage("assistant", body.safety_text);
+    renderSafety(body.safety);
+  }
+  if (body.kind === "offscript") {
+    current.paused = true;
+    await submitMessage(text, { echo: false });
+    if (journey !== current) return;
+    current.paused = false;
+    journeyStep({ preface: "Back to my question:" });
+    return;
+  }
+  if (shown) messages.push({ role: "user", content: shown });
+  journeyAnswers = body.answers || journeyAnswers;
+  if (body.kind === "question") {
+    Object.assign(current, { id: body.journey, pending: body.pending, asked: body.asked });
+    renderJourneyQuestion(body, preface);
+    return;
+  }
+  journey = null;
+  suggestionsElement.classList.remove("journey-options");
+  for (const [field, values] of Object.entries(body.profile || {})) {
+    const existing = profile[field] || [];
+    profile[field] = [...existing, ...values.filter(value => !existing.includes(value))];
+  }
+  renderProfile();
+  persistDirection();
+  addMessage("assistant", body.summary);
+  await submitMessage(body.request, { echo: false, firstTool: body.first_tool });
 }
 
 welcomeInput.addEventListener("keydown", event => {
@@ -842,13 +938,18 @@ function startThinkingStatuses(element) {
   return () => clearInterval(timer);
 }
 
-async function submitMessage(rawContent) {
+async function submitMessage(rawContent, { echo = true, firstTool = null } = {}) {
   const content = rawContent.trim();
   if (!content) return;
+  if (journey && !journey.paused && echo) {
+    await journeyStep({ text: content });
+    return;
+  }
   document.querySelector(".starting-points")?.remove();
+  suggestionsElement.classList.remove("journey-options");
   renderSuggestions();
   messages.push({ role: "user", content });
-  addMessage("user", content);
+  if (echo) addMessage("user", content);
   input.value = "";
   input.style.height = "auto";
   send.disabled = true;
@@ -863,8 +964,9 @@ async function submitMessage(rawContent) {
       headers: { "Content-Type": "application/json" },
       signal: controller.signal,
       body: JSON.stringify({
-        messages,
+        messages: messages.slice(-30),
         profile,
+        first_tool: firstTool,
         selected_occupation: selectedOccupation,
         saved_providers: savedProviders,
       }),

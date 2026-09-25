@@ -1,16 +1,17 @@
-# Resuming Jarvet (written 2026-09-25, end of the counselor phase 1a session)
+# Resuming Jarvet (written 2026-09-25, end of the guided-journeys session)
 
 Works for any AI coding assistant (Claude Code, Cursor, ...) or by hand.
 
 ## Where things stand
 - **Branch:** `related-programs-2026-09-25` (many commits ahead of `main`; not
   pushed to origin, not merged). Push/merge only when the user says so.
-- **App:** Docker container `jarvet` -- LEFT STOPPED at the end of this session
-  (clean shutdown, integrity ok, fresh backup in `C:\Users\chris\jarvet-backups`).
-  Start it with `docker start jarvet`; open http://localhost:8000.
+- **App:** Docker container `jarvet` -- LEFT RUNNING at the end of this session
+  (no database writes this session; last backup in `C:\Users\chris\jarvet-backups`
+  from the phase 1a session). If it is stopped: `docker start jarvet`; open
+  http://localhost:8000.
 - **Plan and progress:** `docs/counselor-plan.md` (checklist at the bottom) and
-  `docs/user-journeys.md` (8 critical user journeys -- DRAFT, waiting for the
-  user's review). Detailed session log: `.cache/session-notes-2026-09-25.md`.
+  `docs/user-journeys.md` (8 critical user journeys -- APPROVED; journey 7 is
+  "Housing Assistance"). Detailed session log: `.cache/session-notes-2026-09-25.md`.
 
 ## Done so far (counselor work)
 1. Safety: crisis line (988 press 1 / chat / text 838255) and homeless call
@@ -23,11 +24,18 @@ Works for any AI coding assistant (Claude Code, Cursor, ...) or by hand.
    (`app/state_help.py`, `data/state-vr-agencies.json`) -- state vocational
    rehabilitation (no VA rating needed), FAFSA/Pell, American Job Centers,
    apprenticeships, VA career counseling. California DOR waiting list noted.
+4. Guided journeys 1, 3, 5 and 8 (`app/journeys.py`, `POST /api/journey`):
+   one question at a time with buttons, "why I'm asking" and progress, asked by
+   the app itself (no model, free); a finished journey sends one composed
+   request to the chat with the tool to run first. Journey 1 hands off to 8
+   when the GI Bill likely doesn't cover the veteran. Cards ALPHA, DELTA, ECHO,
+   GOLF start journeys; new card HOTEL "Other ways to pay for training".
 
 ## Next steps (in order)
-1. User reviews `docs/user-journeys.md` (8 journeys) and the guided-question
-   design; then build the guided-question engine starting with journeys 1, 3, 5
-   and 8.
+1. Guided journeys: with the user's go, run ONE paid chat per finished journey
+   (1, 3, 5, 8) and check the answers (journey 1 must run both the benefits and
+   the program search); then build journeys 4 and 6 (data exists), a "change my
+   answer" button, and the paid journey check in check-counselor.py.
 2. Phase 1a leftovers (see the checklist): state tuition/fee aid (California
    College Promise Grant needs an official source that downloads), other states'
    VR notices, CareerOneStop API key (the user signs up) for a job-center directory.
@@ -51,7 +59,7 @@ Works for any AI coding assistant (Claude Code, Cursor, ...) or by hand.
 
 ## Checks (run after starting the app)
     python scripts/check-search-counts.py --db-only   # 17 search checks, free
-    python scripts/check-counselor.py --no-app        # safety, state help, library; free
+    python scripts/check-counselor.py --no-app        # safety, state help, library, journeys; free
     python scripts/check-counselor.py                 # + 1 chat call (costs model credits)
 Windows Python; the library checks run themselves inside the `jarvet` container.
 

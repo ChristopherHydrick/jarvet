@@ -256,5 +256,236 @@
       "agencies": 0
     }
   ],
-  "state_help_total": 78
+  "state_help_total": 78,
+  "journeys": [
+    {
+      "name": "journey 1, GI Bill path, buttons and typed answers",
+      "journey": "start",
+      "steps": [
+        {
+          "slot": "service",
+          "value": "36plus",
+          "options": [
+            "36 months or more",
+            "Not sure"
+          ]
+        },
+        {
+          "slot": "discharge",
+          "value": "honorable"
+        },
+        {
+          "slot": "used",
+          "text": "no, never"
+        },
+        {
+          "slot": "rating",
+          "text": "30%"
+        },
+        {
+          "slot": "field",
+          "text": "nursing"
+        },
+        {
+          "slot": "location",
+          "text": "San Jose, CA"
+        }
+      ],
+      "expect": {
+        "kind": "done",
+        "first_tool": "search_benefits_info",
+        "request": [
+          "nursing",
+          "within 25 miles of San Jose, CA",
+          "20% or more",
+          "VA makes the final decision"
+        ]
+      }
+    },
+    {
+      "name": "journey 1 hands off to journey 8 (no GI Bill, no rating)",
+      "journey": "start",
+      "steps": [
+        {
+          "slot": "service",
+          "text": "less than 90 days"
+        },
+        {
+          "slot": "discharge",
+          "value": "oth"
+        },
+        {
+          "slot": "rating",
+          "text": "No"
+        },
+        {
+          "slot": "field",
+          "text": "HVAC"
+        },
+        {
+          "slot": "location",
+          "text": "Fresno, CA"
+        },
+        {
+          "slot": "health",
+          "journey": "other-ways",
+          "note": "may not cover you",
+          "value": "yes"
+        },
+        {
+          "slot": "ssdi",
+          "value": "no"
+        },
+        {
+          "slot": "income",
+          "value": "skip"
+        }
+      ],
+      "expect": {
+        "kind": "done",
+        "journey": "other-ways",
+        "first_tool": "find_help_without_va_benefits",
+        "request": [
+          "State I live in: CA",
+          "HVAC",
+          "Other than honorable",
+          "Fresno, CA"
+        ]
+      }
+    },
+    {
+      "name": "journey 3, known job code",
+      "journey": "mos",
+      "steps": [
+        {
+          "slot": "code",
+          "text": "68W"
+        },
+        {
+          "slot": "location",
+          "text": "San Antonio, TX"
+        },
+        {
+          "slot": "distance",
+          "value": "25"
+        }
+      ],
+      "expect": {
+        "kind": "done",
+        "first_tool": "find_va_programs_for_military_job",
+        "request": [
+          "68W",
+          "within 25 miles of San Antonio"
+        ]
+      }
+    },
+    {
+      "name": "journey 3, unknown code, described instead",
+      "journey": "mos",
+      "steps": [
+        {
+          "slot": "code",
+          "text": "zzz"
+        },
+        {
+          "slot": "code",
+          "note": "don't recognize that code",
+          "text": "combat medic"
+        },
+        {
+          "slot": "branch",
+          "value": "Army"
+        },
+        {
+          "slot": "location",
+          "value": "online"
+        }
+      ],
+      "expect": {
+        "kind": "done",
+        "first_tool": null,
+        "request": [
+          "What I did in the military: combat medic",
+          "Branch: Army",
+          "online"
+        ]
+      }
+    },
+    {
+      "name": "journey 5 from the A+ card: field and length already known",
+      "journey": "study",
+      "prefill": {
+        "field": "CompTIA A+ computer technician certification",
+        "length": "short"
+      },
+      "known_location": "Austin, TX",
+      "steps": [
+        {
+          "slot": "location",
+          "note": "already told me",
+          "options": [
+            "Use Austin, TX",
+            "Online programs only"
+          ],
+          "value": "Austin, TX"
+        },
+        {
+          "slot": "distance",
+          "text": "50 miles"
+        }
+      ],
+      "expect": {
+        "kind": "done",
+        "request": [
+          "A+",
+          "within 50 miles of Austin, TX"
+        ]
+      }
+    },
+    {
+      "name": "journey 5, a typed question goes off-script",
+      "journey": "study",
+      "steps": [
+        {
+          "slot": "field",
+          "text": "wait, what is MHA?"
+        }
+      ],
+      "expect": {
+        "kind": "offscript"
+      }
+    },
+    {
+      "name": "journey 8, housing emergency in an answer shows help first",
+      "journey": "other-ways",
+      "steps": [
+        {
+          "slot": "state",
+          "text": "Texas, and I'm getting evicted next week"
+        }
+      ],
+      "expect": {
+        "kind": "question",
+        "slot": "health",
+        "safety": [
+          "housing"
+        ]
+      }
+    },
+    {
+      "name": "journey 8, unknown state is asked again",
+      "journey": "other-ways",
+      "steps": [
+        {
+          "slot": "state",
+          "text": "Narnia"
+        }
+      ],
+      "expect": {
+        "kind": "question",
+        "slot": "state",
+        "note": "didn't recognize that state"
+      }
+    }
+  ]
 }
