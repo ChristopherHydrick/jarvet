@@ -180,11 +180,28 @@ and who to contact.
 
 ## Phases (checklist -- update as work is done)
 
-1. [ ] **Foundation + safety.** Check which VA.gov pages and official PDFs/regulations (eCFR API) download cleanly (try
+1. [~] **Foundation + safety.** Check which VA.gov pages and official PDFs/regulations (eCFR API) download cleanly (try
    sitemap https://www.va.gov/sitemap.xml; education, VR&E, housing/homeless
    sections), build the benefits library + `search_benefits_info` tool, crisis
    rules + server-side check, first accuracy checks. Show the user a sample
    cited answer before building out fully.
+   - [x] Safety (2026-09-25): app/safety.py server check + Veterans Crisis Line
+     (988 then 1, chat and text on veteranscrisisline.net, 838255) / homeless
+     call center (877-424-3838) block and call/chat/text buttons above the reply,
+     shown even if the model fails; prompt rule too.
+   - [x] Library (2026-09-25): 115 sources -> 2,844 passages in
+     .cache/benefits-library.sqlite (scripts/init-benefits-library.py,
+     scripts/benefits-sources.json; VA.gov sitemap is sitemap_index.xml ->
+     sitemap-nb/-cb.xml). Tool `search_benefits_info` (app/benefits.py: keyword
+     + meaning search, off-topic floor 0.6), forced for benefits questions,
+     source links with dates under the reply.
+   - [x] Checks: scripts/check-counselor.py (18 safety, 11 library, 1 chat).
+   - [x] Sample cited answers shown to the user (GI Bill %/online MHA, SSVF,
+     transfer to children).
+   - [ ] User feedback on the sample answers; then add the library to
+     scripts/monthly-refresh.py (fetch + build + swap with the app stopped).
+   - [ ] Build out: more sources as later phases need them (studentaid.gov in
+     phase 5, SSVF Program Guide in phase 3, VA Forms API).
 2. [ ] **GI Bill:** rate tables, "what would I get" calculator, estimate on
    school cards.
 3. [ ] **Housing and support services:** SSVF directory + ZIP-to-county,

@@ -9,6 +9,7 @@ from urllib.parse import quote
 
 import httpx
 
+from app.benefits import BenefitsLibrary, source_label
 from app.ipeds import IpedsIndex
 from app.onet import OnetGraph
 from app.pathways import build_pathway, summary_for_model
@@ -28,6 +29,10 @@ TrainingFetcher = Callable[[str, str], Awaitable[list[dict[str, str]] | None]]
 # Every distance cutoff is quietly widened by this much; the reply still
 # talks about the radius the veteran asked for.
 RADIUS_BUFFER_MILES = 5.0
+# search_benefits_info: passages given to the model per question, and how many
+# of their distinct sources become links under the reply.
+BENEFIT_PASSAGES = 8
+BENEFIT_SOURCE_LINKS = 3
 AFSC_SKILL_LEVEL = re.compile(r"\s+(Helper|Apprentice|Journeyman|Craftsman|Superintendent)$")
 # Cap on "Related programs" schools per search: each one costs a live VA API
 # call to enrich its card, and past this many the section stops advising and
@@ -70,6 +75,35 @@ def wants_named_program_search(message: str, selected_occupation: dict[str, str]
     if selected_occupation is not None or not message:
         return False
     return bool(NAMED_PROGRAM_HINTS.search(message)) and not CAREER_EXPLORATION_HINTS.search(message)
+
+
+# Benefits questions must be answered from the benefits library, never from
+# the model's memory -- but in testing the model answered "What does SSVF
+# help with?" straight from memory despite the system prompt. So, as with
+# force_program_search, the first tool call of a turn is pinned to
+# search_benefits_info when the latest message names a benefit program or
+# benefit term (and is not a program search, which takes precedence and
+# leaves the model free to look up benefits on the next round).
+BENEFITS_QUESTION_HINTS = re.compile(
+    r"\bgi\s*bill\b|\bchapter\s*(?:30|31|33|35|36|1606)\b|\bpost[\s-]?9/?11\b|\bmontgomery\b|"
+    r"\bmgib\b|\bvr\s*&\s*e\b|\bvoc(?:ational)?\s+rehab|\bveteran\s+readiness\b|\byellow\s+ribbon\b|"
+    r"\bhousing\s+(?:allowance|stipend)\b|\bmha\b|\bbah\b|\bdea\b|\bfry\s+scholarship\b|\bssvf\b|"
+    r"\bsupportive\s+services\b|\bhud[\s-]?vash\b|\bgrant\s+and\s+per\s+diem\b|\bentitlement\b|"
+    r"\btuition\s+assistance\b|\bvet\s*tec\b|\bstem\s+scholarship\b|\beducation(?:al)?\s+benefits?\b|"
+    r"\btransfer\w*\s+(?:my\s+)?(?:gi|benefits|education)\b|\bkicker\b|\bwork[\s-]study\b|\bbooks?\s+stipend\b",
+    re.I,
+)
+
+
+SCHOOL_SEARCH_HINTS = re.compile(
+    r"\b(?:schools?|colleges?|universit(?:y|ies)|degrees?|certificates?|diploma|training|"
+    r"apprenticeships?|near\s+(?:me|\w+)|within\s+\d+|miles?)\b",
+    re.I,
+)
+
+
+def wants_benefits_info(message: str) -> bool:
+    return bool(message) and bool(BENEFITS_QUESTION_HINTS.search(message))
 
 
 # The model has been observed inventing a radius_miles value (often the
@@ -257,6 +291,29 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "search_benefits_info",
+            "description": (
+                "Search Jarvet's library of official sources (VA.gov education, GI Bill, VR&E, "
+                "dependents' benefits and rate pages; VA homeless-program pages; 38 CFR Part 21 and "
+                "Part 62 regulations; SSVF PDFs) for passages that answer a benefits question. "
+                "Returns passages with their source name, link and date. Answer benefits questions "
+                "only from these passages."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "The veteran's question in plain words, including program names they used (e.g. 'Post-9/11 GI Bill housing allowance for online classes').",
+                    },
+                },
+                "required": ["question"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_official_resources",
             "description": "Attach trusted official action links relevant to the user's need.",
             "parameters": {
@@ -279,8 +336,10 @@ class JarvetTools:
         self, onet: OnetGraph, va: VaComparison, ipeds: IpedsIndex,
         official_resources: dict[str, dict[str, str]], selected: dict[str, str] | None,
         provider_context: str, nationwide_requested: bool = False,
+        benefits: BenefitsLibrary | None = None,
     ) -> None:
         self.onet = onet
+        self.benefits = benefits
         self.va = va
         self.ipeds = ipeds
         self.official_resources = official_resources
@@ -298,6 +357,55 @@ class JarvetTools:
         # "Your path forward" section from the latest military-job search,
         # which the page renders above the cards (app/pathways.py).
         self.pathway: dict[str, Any] | None = None
+
+    def _search_benefits(self, question: str) -> dict[str, Any]:
+        """Library passages for a benefits question (app/benefits.py); the
+        top few distinct sources are attached as links under the reply."""
+        if self.benefits is None or not self.benefits.available:
+            return {"error": "The benefits library is not available right now.", "passages": []}
+        passages = self.benefits.search(question, limit=BENEFIT_PASSAGES)
+        if not passages:
+            return {
+                "passages": [],
+                "note": (
+                    "Nothing in the library answers this. Say so plainly, do not answer from memory, "
+                    "and point the veteran to the official source (VA education questions: "
+                    "888-442-4551; housing: 877-424-3838)."
+                ),
+            }
+        sources: list[str] = []
+        for passage in passages:
+            if passage["url"] not in sources and len(sources) < BENEFIT_SOURCE_LINKS:
+                sources.append(passage["url"])
+                # Regulation passages link to their own section, so name the
+                # section ("38 CFR 62.33 Supportive service: ...") rather than
+                # the whole part, or two links would read the same.
+                name = passage["title"]
+                if passage["kind"] == "regulation" and passage["citation"]:
+                    section = re.sub(r"^§\s*[\d.]+\s*", "", passage["heading"].split(" > ")[-1])
+                    name = f"{passage['citation']} {section}".strip()
+                self._add_resource({
+                    "label": f"Source: {name}"[:110] + (
+                        f" (updated {passage['updated']})" if passage["updated"] else ""
+                    ),
+                    "url": passage["url"],
+                    "kind": "benefit-source",
+                    "updated": passage["updated"],
+                })
+        return {
+            "library_updated": self.benefits.info.get("fetched", ""),
+            "passages": [
+                {
+                    "source": source_label(passage),
+                    "kind": {"page": "official web page", "pdf": "official PDF",
+                             "regulation": "federal regulation"}[passage["kind"]],
+                    "section": passage["heading"],
+                    "text": passage["text"],
+                    "similarity": passage["similarity"],
+                }
+                for passage in passages
+            ],
+        }
 
     def _add_resource(self, resource: dict[str, Any]) -> None:
         # VA's insturl / vet_tuition_policy_url fields are often stored
@@ -1198,6 +1306,9 @@ class JarvetTools:
                 ),
             }
 
+        if name == "search_benefits_info":
+            return self._search_benefits(str(arguments.get("question") or ""))
+
         if name == "get_official_resources":
             resources = []
             for topic in arguments.get("topics", []):
@@ -1337,6 +1448,7 @@ async def run_agent(
     onet: OnetGraph, va: VaComparison, ipeds: IpedsIndex,
     official_resources: dict[str, dict[str, str]],
     base_url: str, api_key: str, model: str, safety_notes: list[str] | None = None,
+    benefits: BenefitsLibrary | None = None,
 ) -> dict[str, Any]:
     provider_context = " ".join([
         messages[-1]["content"] if messages else "",
@@ -1347,12 +1459,14 @@ async def run_agent(
         onet, va, ipeds, official_resources, selected_occupation,
         provider_context,
         nationwide_requested=wants_nationwide_scope(messages[-1]["content"] if messages else ""),
+        benefits=benefits,
     )
     system = f"""You are Jarvet, an agentic education and career facilitator for veterans. Solve the user's actual problem by deciding which tools to call, inspecting their results, and adapting your next step. Do not follow a fixed questionnaire.
 
 Operating principles:
 - Safety comes before everything else. If the user mentions suicide, self-harm, or wanting to die, however indirectly, begin your reply with the Veterans Crisis Line: dial 988 then press 1, chat live at veteranscrisisline.net, or text 838255 (free, confidential, 24/7; 911 if in immediate danger). If they are homeless or about to lose their housing, begin with the National Call Center for Homeless Veterans, 877-424-3838 (free, 24/7). Then respond to the person with warmth before anything else.
 - Use tools for every factual claim about occupations, programs, providers, geography, VA approval, and benefits. Never invent results.
+- For any question about how a benefit works -- GI Bill chapters, eligibility, months of entitlement, payment and housing allowance rules or rates, Yellow Ribbon, VR&E, benefits for spouses and children, how to apply, or VA homeless and housing programs such as SSVF, HUD-VASH and Grant and Per Diem -- call search_benefits_info first -- once per distinct part of the question (for example one search for "Post-9/11 percentage for 24 months of service" and another for "housing allowance for online classes") -- and answer ONLY from the passages it returns, never from your own memory, since rules and rates change. Put it in plain language (regulations and provider guides are written for staff; say what they mean for the veteran), and name where it comes from in words, with its date (for example "according to VA.gov, updated July 2026"); the source links appear below your reply automatically. When passages disagree, a regulation outranks a web page, and a newer date outranks an older one; say "starting October 1, 2026" when a passage is a future rate. If the passages do not answer the question, say you could not find it in official sources and point to the right contact (VA education: 888-442-4551) instead of guessing. Jarvet cannot see the veteran's VA record, decide eligibility, or file anything: say "you may qualify" and "VA makes the final decision". VA disability claims and VA health care are outside Jarvet's scope: mention that they exist and suggest an accredited representative (a Veterans Service Organization) rather than advising.
 - When a tool result includes an exact total count (total_facilities, total_programs), open with that exact number ("Found 25 VA-approved diver programs") instead of a vague quantifier like several, many, or multiple. The count is precisely known from structured data; state it precisely.
 - Preserve the current selected occupation unless the user clearly changes career goals. If they do, search and then call get_occupation for the best supported match.
 - When search_occupations returns several plausible matches, do not silently pick one. Present the top matches with one-line distinctions and let the user choose, unless one is an obviously exact match for the user's words. A user who said "fix cars" means automotive work; if the best match is not automotive, say why and offer the automotive match.
@@ -1409,14 +1523,25 @@ Preserve valid profile facts, update direct user corrections, and do not infer s
     headers = {"Authorization": f"Bearer {api_key}"}
     endpoint = f"{base_url.rstrip('/')}/chat/completions"
     latest_message = messages[-1]["content"] if messages else ""
-    force_program_search = wants_named_program_search(latest_message, selected_occupation)
+    benefits_question = (
+        benefits is not None and benefits.available and wants_benefits_info(latest_message)
+    )
+    # "What does the SSVF program help with?" says "program" but asks about a
+    # benefit; only a message that is also clearly about finding schools or
+    # training ("GI Bill approved welding schools near Austin") stays a
+    # program search.
+    force_program_search = wants_named_program_search(latest_message, selected_occupation) and not (
+        benefits_question and not SCHOOL_SEARCH_HINTS.search(latest_message)
+    )
     # A program request naming a military job code ("I was a 68W, what
     # schools...") goes to the military-job search; forcing the keyword
     # search there searched for the code itself and found nothing.
     forced_program_tool = (
         "find_va_programs_for_military_job" if onet.military_code_in(latest_message)
         else "find_va_programs"
-    ) if force_program_search else None
+    ) if force_program_search else (
+        "search_benefits_info" if benefits_question else None
+    )
 
     async with httpx.AsyncClient(timeout=180) as client:
         for turn_index in range(8):

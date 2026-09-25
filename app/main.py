@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from app import safety
 from app.agent import arrange_listings, run_agent
+from app.benefits import BenefitsLibrary
 from app.cache import ResponseCache
 from app.ipeds import IpedsIndex
 from app.onet import OnetGraph
@@ -25,6 +26,11 @@ ROOT = Path(__file__).resolve().parent.parent
 index = OnetGraph(ROOT / ".cache" / "onet-store")
 va_index = VaComparison(ROOT / ".cache" / "va-comparison.sqlite")
 ipeds_index = IpedsIndex(ROOT / ".cache" / "ipeds.sqlite")
+# Official benefits passages for search_benefits_info; a separate read-only
+# file (scripts/init-benefits-library.py), using program search's embedder.
+benefits_library = BenefitsLibrary(
+    ROOT / ".cache" / "benefits-library.sqlite", embed=va_index._query_embedding,
+)
 response_cache = ResponseCache(
     ROOT / ".cache" / "chat-responses.sqlite",
     version=os.getenv("JARVET_CACHE_VERSION", "25"),
@@ -38,6 +44,7 @@ async def lifespan(_: FastAPI):
     index.load()
     va_index.load()
     ipeds_index.load()
+    benefits_library.load()
     response_cache.load()
     try:
         yield
@@ -245,6 +252,8 @@ def health():
         "status": "ok",
         "occupations": index.occupation_count,
         "va_facilities": va_index.facility_count,
+        "benefit_passages": benefits_library.passage_count,
+        "benefits_library_fetched": benefits_library.info.get("fetched", ""),
         "query_engine": "Oxigraph",
         "agent": "native-tool-calling",
         "model": os.getenv("LLM_MODEL", ""),
@@ -297,6 +306,7 @@ async def chat(request: ChatRequest, response: Response):
             api_key=api_key,
             model=model,
             safety_notes=[safety.MODEL_NOTES[concern] for concern in concerns],
+            benefits=benefits_library,
         )
     except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as error:
         if concerns:

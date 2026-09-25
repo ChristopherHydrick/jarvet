@@ -204,6 +204,31 @@ else is a bug to look into first. `apply` replaces only the refreshed tables
 in the live database, so hand corrections, website/apply-link guesses and
 saved school details are kept, and it refuses to write while the app is up.
 
+### Benefits library and safety replies (counselor plan)
+
+Benefits questions (GI Bill, VR&E, dependents' benefits, SSVF, HUD-VASH, ...)
+are answered only from official passages, never from the model's memory
+(`docs/counselor-plan.md`). The `search_benefits_info` chat tool searches
+`.cache/benefits-library.sqlite`, a separate read-only file built from the
+sources in `scripts/benefits-sources.json` (VA.gov education/career pages by
+sitemap, VA homeless-program pages, 38 CFR Parts 21 and 62 from the eCFR API,
+SSVF PDFs with page numbers). Each reply links its sources with their dates.
+
+```bash
+python scripts/init-benefits-library.py fetch    # Windows Python + pypdf; app keeps running
+docker run --rm -v C:/Users/chris/jarvet:/workspace -w /workspace jarvet-dev bash -c \
+  "tar -C /tmp -xf .cache/_related_fields/fastembed_cache.tar && .venv/bin/python scripts/init-benefits-library.py build"
+docker stop jarvet && mv .cache/benefits-library.new.sqlite .cache/benefits-library.sqlite && docker start jarvet
+```
+
+`app/safety.py` checks every message on the server: suicide/self-harm puts the
+Veterans Crisis Line (dial 988 then press 1, chat at veteranscrisisline.net,
+text 838255) with call/chat/text buttons above the reply; homelessness or
+losing housing puts the National Call Center for Homeless Veterans
+(877-424-3838). These are shown even if the model fails.
+`python scripts/check-counselor.py` checks both (`--no-app` skips the one
+chat call).
+
 ## School program data (IPEDS)
 
 Initialization downloads the NCES IPEDS institutional directory (HD2024) and

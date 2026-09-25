@@ -1,0 +1,60 @@
+{
+  "_about": "Sources for the benefits library (scripts/init-benefits-library.py, docs/counselor-plan.md). VA.gov pages come from its sitemap by prefix; the rest are listed. Checked 2026-09-25.",
+  "vagov_sitemaps": ["https://www.va.gov/sitemap-nb.xml", "https://www.va.gov/sitemap-cb.xml"],
+  "vagov_prefixes": [
+    "https://www.va.gov/education/",
+    "https://www.va.gov/careers-employment/",
+    "https://www.va.gov/family-and-caregiver-benefits/education-and-careers/",
+    "https://www.va.gov/housing-assistance/home-loans/trouble-making-payments/"
+  ],
+  "vagov_exclude": [
+    "past-rates", "-esp/", "/apply-", "form-", "/your-", "status", "/gi-bill-comparison-tool",
+    "/check-remaining", "/download-", "/verify-school-enrollment/", "/how-to-apply/application/",
+    "/education/apply-for-education-benefits/application", "/request-", "/submit-", "/review-", "/yellow-ribbon-participating-schools/"
+  ],
+  "pages": [
+    "https://department.va.gov/homeless/",
+    "https://department.va.gov/homeless/nationalcallcenter/",
+    "https://department.va.gov/homeless/what-to-expect-when-you-call-the-national-call-center-for-homeless-veterans/",
+    "https://department.va.gov/homeless/what-services-does-va-provide-to-homeless-and-at-risk-veterans/",
+    "https://department.va.gov/homeless/quick-guide-va-programs-and-services-for-homeless-and-at-risk-veterans/",
+    "https://department.va.gov/homeless/how-does-va-help-veterans-at-risk-of-homelessness/",
+    "https://department.va.gov/homeless/how-does-va-help-homeless-and-at-risk-veteran-families/",
+    "https://department.va.gov/homeless/how-does-va-help-homeless-and-at-risk-women-veterans/",
+    "https://department.va.gov/homeless/faqs/",
+    "https://department.va.gov/homeless/supportive-services-for-veteran-families/",
+    "https://department.va.gov/homeless/supportive-services-for-veteran-families/supportive-services/",
+    "https://department.va.gov/homeless/hud-vash/",
+    "https://department.va.gov/homeless/what-is-hud-vash-and-how-does-it-help-homeless-veterans/",
+    "https://department.va.gov/homeless/grant-per-diem/",
+    "https://department.va.gov/homeless/hchv/",
+    "https://department.va.gov/homeless/hchv/community-resource-and-referral-centers/",
+    "https://department.va.gov/homeless/hchv/contract-residential-services/",
+    "https://department.va.gov/homeless/24-7-access-to-interim-housing-for-homeless-veterans/",
+    "https://department.va.gov/homeless/what-is-interim-housing/",
+    "https://department.va.gov/homeless/what-is-permanent-housing/",
+    "https://department.va.gov/homeless/flexible-assistance-for-homeless-veterans/",
+    "https://department.va.gov/homeless/employment/",
+    "https://department.va.gov/homeless/employment/fact-sheet-homeless-veteran-community-employment-services/",
+    "https://department.va.gov/homeless/legal-services-for-veterans/",
+    "https://department.va.gov/homeless/veterans-justice-programs/",
+    "https://department.va.gov/homeless/veterans-justice-programs/veterans-justice-outreach/",
+    "https://department.va.gov/homeless/veterans-justice-programs/hcrv/",
+    "https://department.va.gov/homeless/stand-down-events/",
+    "https://department.va.gov/homeless/food-security-office/",
+    "https://department.va.gov/homeless/avoid-foreclosure-on-a-va-home-loan/",
+    "https://department.va.gov/homeless/building-financial-stability/",
+    "https://department.va.gov/homeless/homeless-veterans-dental-program/",
+    "https://department.va.gov/homeless/do-homeless-veterans-have-access-to-va-hospitals/"
+  ],
+  "regulations": [
+    {"title": 38, "part": 21, "name": "38 CFR Part 21 -- VA education and Veteran Readiness and Employment rules"},
+    {"title": 38, "part": 62, "name": "38 CFR Part 62 -- Supportive Services for Veteran Families (SSVF) rules"}
+  ],
+  "pdfs": [
+    {"url": "https://department.va.gov/homeless/wp-content/uploads/sites/72/2026/09/SSVF_Annual_GHSA_Update_2026.pdf",
+     "title": "SSVF Annual GHSA Update 2026", "publisher": "VA Homeless Programs Office"},
+    {"url": "https://department.va.gov/homeless/wp-content/uploads/sites/72/2026/04/SSVF_Annual_Report_FY2024.pdf",
+     "title": "SSVF Annual Report FY2024", "publisher": "VA Homeless Programs Office"}
+  ]
+}
