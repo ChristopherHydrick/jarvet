@@ -1,5 +1,5 @@
 {
-  "_about": "Sources for the benefits library (scripts/init-benefits-library.py, docs/counselor-plan.md). VA.gov pages come from its sitemap by prefix; the rest are listed. Checked 2026-09-25.",
+  "_about": "Sources for the benefits library (scripts/init-benefits-library.py, docs/counselor-plan.md). VA.gov pages come from its sitemap by prefix; the rest are listed. Checked 2026-09-25. Non-VA routes (state VR, federal student aid, WIOA/American Job Centers) added 2026-09-25 (counselor plan phase 1a).",
   "vagov_sitemaps": [
     "https://www.va.gov/sitemap-nb.xml",
     "https://www.va.gov/sitemap-cb.xml"
@@ -61,7 +61,12 @@
     "https://department.va.gov/homeless/avoid-foreclosure-on-a-va-home-loan/",
     "https://department.va.gov/homeless/building-financial-stability/",
     "https://department.va.gov/homeless/homeless-veterans-dental-program/",
-    "https://department.va.gov/homeless/do-homeless-veterans-have-access-to-va-hospitals/"
+    "https://department.va.gov/homeless/do-homeless-veterans-have-access-to-va-hospitals/",
+    "https://www.dor.ca.gov/Home/GettingStarted",
+    "https://www.careeronestop.org/Veterans/default.aspx",
+    "https://www.careeronestop.org/Veterans/BackToSchool/back-to-school.aspx",
+    "https://www.careeronestop.org/Veterans/BenefitsAndAssistance/benefits-and-assistance.aspx",
+    "https://www.careeronestop.org/LocalHelp/AmericanJobCenters/find-american-job-centers.aspx"
   ],
   "regulations": [
     {
@@ -75,6 +80,13 @@
       "name": "38 CFR Part 62 -- Supportive Services for Veteran Families (SSVF) rules",
       "exclude_sections": "^62\\.(?:2\\d|[4-8]\\d)$",
       "_exclude_why": "Grant applications, scoring, payments, monitoring, reporting and closeout are rules for grant administrators; they crowded veteran-facing rules (62.30-62.38) out of search results."
+    },
+    {
+      "title": 34,
+      "part": 361,
+      "name": "34 CFR Part 361 -- State Vocational Rehabilitation Services Program rules (eligibility, services, order of selection)",
+      "include_sections": "^361\\.(?:5|36|4[1-9]|5[0-7])$",
+      "_include_why": "Definitions, order of selection, and the application/eligibility/services sections; the rest is state-plan administration."
     }
   ],
   "pdfs": [
@@ -87,6 +99,16 @@
       "url": "https://department.va.gov/homeless/wp-content/uploads/sites/72/2026/04/SSVF_Annual_Report_FY2024.pdf",
       "title": "SSVF Annual Report FY2024",
       "publisher": "VA Homeless Programs Office"
+    },
+    {
+      "url": "https://studentaid.gov/sites/default/files/federal-grant-programs.pdf",
+      "title": "Federal Grant Programs (Pell and other grants)",
+      "publisher": "Federal Student Aid, U.S. Department of Education"
+    },
+    {
+      "url": "https://studentaid.gov/sites/default/files/do-you-need-money.pdf",
+      "title": "Do You Need Money for College? Federal Student Aid guide",
+      "publisher": "Federal Student Aid, U.S. Department of Education"
     }
   ]
 }

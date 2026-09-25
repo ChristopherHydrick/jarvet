@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from app import safety
 from app.agent import arrange_listings, run_agent
 from app.benefits import BenefitsLibrary, fastembed_reranker
+from app.state_help import StateHelp
 from app.cache import ResponseCache
 from app.ipeds import IpedsIndex
 from app.onet import OnetGraph
@@ -32,6 +33,9 @@ benefits_library = BenefitsLibrary(
     ROOT / ".cache" / "benefits-library.sqlite", embed=va_index._query_embedding,
     rerank=fastembed_reranker(),
 )
+# State vocational rehabilitation agencies + federal routes for veterans the
+# VA does not cover (data/state-vr-agencies.json).
+state_help = StateHelp()
 response_cache = ResponseCache(
     ROOT / ".cache" / "chat-responses.sqlite",
     version=os.getenv("JARVET_CACHE_VERSION", "25"),
@@ -46,6 +50,7 @@ async def lifespan(_: FastAPI):
     va_index.load()
     ipeds_index.load()
     benefits_library.load()
+    state_help.load()
     response_cache.load()
     try:
         yield
@@ -308,6 +313,7 @@ async def chat(request: ChatRequest, response: Response):
             model=model,
             safety_notes=[safety.MODEL_NOTES[concern] for concern in concerns],
             benefits=benefits_library,
+            state_help=state_help,
         )
     except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as error:
         if concerns:

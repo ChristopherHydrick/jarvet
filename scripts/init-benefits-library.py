@@ -167,6 +167,14 @@ class PageText(HTMLParser):
             self.line.append(data)
 
 
+PUBLISHERS = {
+    "www.va.gov": "VA.gov",
+    "dor.ca.gov": "California Department of Rehabilitation",
+    "careeronestop.org": "CareerOneStop (U.S. Department of Labor)",
+    "studentaid.gov": "Federal Student Aid, U.S. Department of Education",
+    "rsa.ed.gov": "Rehabilitation Services Administration, U.S. Department of Education",
+}
+
 # Page-furniture sections (sub-menus, share buttons, "related" link lists).
 NOISE_HEADINGS = re.compile(r"navigation|share this|in this section|related (?:links|content|pages)|"
                             r"^events$|^need help\??$|^on this page$", re.I)
@@ -196,7 +204,9 @@ def fetch_page(url: str) -> dict:
         {"heading": heading, "text": "\n".join(lines)} for heading, lines in parser.sections
         if lines and not NOISE_HEADINGS.search(heading)
     ]
-    publisher = "VA.gov" if "www.va.gov" in url else "VA Homeless Programs Office"
+    publisher = next(
+        (name for domain, name in PUBLISHERS.items() if domain in url), "VA Homeless Programs Office",
+    )
     return {"url": url, "title": title, "kind": "page", "publisher": publisher,
             "updated": page_date(raw), "sections": sections}
 
@@ -396,6 +406,9 @@ def build(args: argparse.Namespace) -> int:
     sources = json.loads(SOURCES.read_text(encoding="utf-8"))
     excluded = [re.compile(item["exclude_sections"]) for item in sources["regulations"]
                 if item.get("exclude_sections")]
+    # ... or only the listed sections are kept ("include_sections").
+    included = {(str(item["title"]), str(item["part"])): re.compile(item["include_sections"])
+                for item in sources["regulations"] if item.get("include_sections")}
     for entry in manifest["documents"]:
         document = json.loads((RAW / f"{entry['id']}.json").read_text(encoding="utf-8"))
         database.execute(
@@ -406,6 +419,9 @@ def build(args: argparse.Namespace) -> int:
         for section in document["sections"]:
             number = section.get("citation", "").split(" CFR ")[-1]
             if section.get("citation") and any(pattern.match(number) for pattern in excluded):
+                continue
+            only = included.get((section.get("citation", "").split(" ")[0], number.split(".")[0]))
+            if section.get("citation") and only and not only.match(number):
                 continue
             heading = section["heading"]
             if section.get("subpart"):

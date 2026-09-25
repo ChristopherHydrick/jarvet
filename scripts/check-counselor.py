@@ -10,6 +10,9 @@
             questions, and nothing for an off-topic one. Needs numpy and
             fastembed, so on Windows it runs itself inside the jarvet
             container (docker exec, library file opened read-only). Free.
+  state  -- the state vocational rehabilitation directory (app/state_help.py,
+            data/state-vr-agencies.json) has all 78 agencies and finds the
+            right ones for saved places. Free.
   app    -- (skipped with --no-app) sends the safety_app messages to the
             running app and checks the reply starts with the help text and
             carries the call/chat/text buttons. Costs model credits.
@@ -95,6 +98,33 @@ def check_library(checks: dict) -> int:
     return failures
 
 
+def check_state_help(checks: dict) -> int:
+    from app.state_help import StateHelp
+    helper = StateHelp()
+    helper.load()
+    failures = 0
+    total_ok = len(helper.agencies) == checks.get("state_help_total", 78)
+    failures += not total_ok
+    print(f"{'ok  ' if total_ok else 'FAIL'}  state VR directory has {len(helper.agencies)} agencies "
+          f"(expected {checks.get('state_help_total', 78)})")
+    for case in checks.get("state_help", []):
+        result = helper.routes(case["state"])
+        agencies = result.get("state_vr_agencies", [])
+        problems = []
+        if len(agencies) != case["agencies"]:
+            problems.append(f"{len(agencies)} agencies, expected {case['agencies']}")
+        if case.get("name") and not any(case["name"] in a["name"] for a in agencies):
+            problems.append(f"no agency named {case['name']!r}")
+        if case.get("code") and helper.state_code(case["state"]) != case["code"]:
+            problems.append(f"state {helper.state_code(case['state'])}, expected {case['code']}")
+        if case.get("notice") and "state_vr_current_notice" not in result:
+            problems.append("current notice missing")
+        failures += bool(problems)
+        print(f"{'ok  ' if not problems else 'FAIL'}  state help {case['state']!r}"
+              + (f" -- {'; '.join(problems)}" if problems else ""))
+    return failures
+
+
 def check_app(checks: dict, base_url: str, timeout: float) -> int:
     failures = 0
     for case in checks["safety_app"]:
@@ -132,6 +162,7 @@ def main() -> int:
     if args.library_only:
         return 1 if check_library(checks) else 0
     failures = check_safety(checks)
+    failures += check_state_help(checks)
     failures += check_library(checks)
     if not args.no_app:
         failures += check_app(checks, args.app_url, args.timeout)

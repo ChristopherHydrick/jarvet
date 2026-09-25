@@ -199,6 +199,62 @@
       "question": "What is HUD-VASH?",
       "top": 3,
       "text": "voucher"
+    },
+    {
+      "question": "Who is eligible for state vocational rehabilitation services?",
+      "top": 3,
+      "url": "section-361.42"
+    },
+    {
+      "question": "Is the California Department of Rehabilitation taking new applicants?",
+      "top": 3,
+      "url": "dor.ca.gov",
+      "text": "waiting list"
+    },
+    {
+      "question": "What is a Pell Grant and who can get one?",
+      "top": 3,
+      "url": "studentaid.gov",
+      "text": "Pell"
     }
-  ]
+  ],
+  "state_help": [
+    {
+      "state": "California",
+      "agencies": 1,
+      "name": "Department of Rehabilitation",
+      "notice": true
+    },
+    {
+      "state": "San Jose, CA",
+      "agencies": 1,
+      "name": "Department of Rehabilitation",
+      "notice": true
+    },
+    {
+      "state": "West Virginia",
+      "agencies": 1,
+      "code": "WV"
+    },
+    {
+      "state": "Virginia",
+      "agencies": 2,
+      "code": "VA"
+    },
+    {
+      "state": "Arkansas",
+      "agencies": 2,
+      "code": "AR"
+    },
+    {
+      "state": "TX",
+      "agencies": 1,
+      "code": "TX"
+    },
+    {
+      "state": "Narnia",
+      "agencies": 0
+    }
+  ],
+  "state_help_total": 78
 }

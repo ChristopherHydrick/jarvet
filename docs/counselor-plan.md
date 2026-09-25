@@ -211,7 +211,18 @@ journey forward; each journey gets its own automated check.
    - [x] Library added to scripts/monthly-refresh.py (prepare step "library",
      report section, swap on apply) -- 2026-09-25.
    - [ ] User feedback on the sample answers.
-1a. [ ] **Routes without VA benefits (critical, user 2026-09-25).** Veterans with
+1a. [~] **Routes without VA benefits (critical, user 2026-09-25).** DONE 2026-09-25:
+   state VR directory (data/state-vr-agencies.json, 78 agencies, from
+   scripts/init-state-vr-agencies.py), tool `find_help_without_va_benefits`
+   (app/state_help.py: agencies, 34 CFR 361 rule in plain words, California DOR
+   waiting-list notice, FAFSA/Pell, American Job Center/WIOA, apprenticeships,
+   Chapter 36), prompt rule "never stop at you don't qualify", library +8 sources
+   (34 CFR 361 eligibility/services sections, DOR Get Started, CareerOneStop
+   veterans + job-center finder, 2 Federal Student Aid PDFs), checks. STILL TO DO:
+   state aid (California College Promise Grant page blocks scripts -- find another
+   official source), other states' current VR notices (only CA hand-checked),
+   CareerOneStop API key for a real job-center directory (user to sign up), journey 8
+   screens (with the journey engine). Veterans with
    no GI Bill (never qualified, used up, expired, other-than-honorable
    discharge) or no VA rating for VR&E must still get a path to training:
    - State vocational rehabilitation (VR): 78 agencies (RSA list,
@@ -247,6 +258,8 @@ journey forward; each journey gets its own automated check.
 7. [ ] Later/maybe: veteran sign-in for the Education Benefits API.
 
 ## Restarting after a chat clear
+
+**See docs/RESUME.md first** (current state, rules, next steps, resume prompt).
 
 Tell Claude:
 

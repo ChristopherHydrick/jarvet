@@ -1,0 +1,709 @@
+{
+ "source": "https://rsa.ed.gov/about/states",
+ "fetched": "2026-09-25",
+ "about": "State vocational rehabilitation agencies. 'combined' serves all disabilities; where a state has two, 'general' serves all but blindness/low vision and 'blind' serves blindness/low vision.",
+ "agencies": [
+  {
+   "state": "Alabama",
+   "code": "AL",
+   "type": "combined",
+   "name": "Department of Rehabilitation Services",
+   "phone": "(334) 293-7500",
+   "toll_free": "(800) 441-7607",
+   "website": "https://www.rehab.alabama.gov/services/vr/vr"
+  },
+  {
+   "state": "Alaska",
+   "code": "AK",
+   "type": "combined",
+   "name": "Division of Vocational Rehabilitation",
+   "phone": "(907) 465-2814",
+   "toll_free": "(800) 478-2815",
+   "website": "https://labor.alaska.gov/dvr/"
+  },
+  {
+   "state": "Arizona",
+   "code": "AZ",
+   "type": "combined",
+   "name": "Rehabilitation Services Administration",
+   "phone": "(602) 542-6295",
+   "website": "https://des.az.gov/services/employment/rehabilitation-services/vocational-rehabilitation-vr"
+  },
+  {
+   "state": "American Samoa",
+   "code": "AS",
+   "type": "combined",
+   "name": "Office of Vocational Rehabilitation",
+   "phone": "(684) 699-1371 or (684) 699-4234",
+   "website": "http://americansamoa.gov/"
+  },
+  {
+   "state": "Arkansas",
+   "code": "AR",
+   "type": "general",
+   "name": "Arkansas Rehabilitation Services",
+   "phone": "(501) 296-1600",
+   "website": "https://dws.arkansas.gov/ar-rehabilitation-services/"
+  },
+  {
+   "state": "Arkansas",
+   "code": "AR",
+   "type": "blind",
+   "name": "Division of Services for the Blind",
+   "phone": "(501) 682-5463",
+   "tty": "(501) 682-0093",
+   "website": "https://dws.arkansas.gov/services-for-the-blind/"
+  },
+  {
+   "state": "California",
+   "code": "CA",
+   "type": "combined",
+   "name": "Department of Rehabilitation",
+   "phone": "(916) 324-1313",
+   "tty": "(916) 558-5807",
+   "website": "http://www.dor.ca.gov"
+  },
+  {
+   "state": "Colorado",
+   "code": "CO",
+   "type": "combined",
+   "name": "Division of Vocational Rehabilitation",
+   "phone": "(303) 318-8571",
+   "toll_free": "(866) 870-4595",
+   "tty": "(303) 866-4150",
+   "website": "https://dvr.colorado.gov/"
+  },
+  {
+   "state": "Connecticut",
+   "code": "CT",
+   "type": "general",
+   "name": "Bureau of Rehabilitation Services",
+   "phone": "(860) 424-4844",
+   "toll_free": "(800) 537-2549",
+   "video_phone": "(860) 920-7163",
+   "website": "https://portal.ct.gov/AgingandDisability/Content-Pages/Programs/Vocational-Rehabilitation---Bureau-of-Rehabilitation-Services"
+  },
+  {
+   "state": "Connecticut",
+   "code": "CT",
+   "type": "blind",
+   "name": "Bureau of Education and Services for the Blind",
+   "phone": "(860) 602-4008",
+   "toll_free": "(800) 842-4510",
+   "tty": "(860) 602-4221",
+   "website": "https://portal.ct.gov/ads/knowledge-base/articles/employment-services/for-job-seekers/information-for-job-seekers-who-are-blind?language=en_US"
+  },
+  {
+   "state": "Delaware",
+   "code": "DE",
+   "type": "general",
+   "name": "Division of Vocational Rehabilitation",
+   "phone": "(302) 761-8275",
+   "tty": "(302) 761-8275",
+   "website": "https://dvr.delawareworks.com/"
+  },
+  {
+   "state": "Delaware",
+   "code": "DE",
+   "type": "blind",
+   "name": "Division for the Visually Impaired",
+   "phone": "(302) 255-9800",
+   "tty": "(302) 255-9854",
+   "website": "http://www.dhss.delaware.gov/dvi/"
+  },
+  {
+   "state": "District of Columbia",
+   "code": "DC",
+   "type": "combined",
+   "name": "Rehabilitation Services Administration",
+   "phone": "(202) 730-1700",
+   "tty": "(202) 730-1516",
+   "website": "https://dds.dc.gov/service/vocational-rehabilitation-services"
+  },
+  {
+   "state": "Florida",
+   "code": "FL",
+   "type": "general",
+   "name": "Division of Vocational Rehabilitation",
+   "phone": "(850) 245-3479",
+   "toll_free": "(800) 451-4327",
+   "tty": "(850) 245-3399",
+   "website": "http://www.rehabworks.org/"
+  },
+  {
+   "state": "Florida",
+   "code": "FL",
+   "type": "blind",
+   "name": "Division of Blind Services",
+   "phone": "(850) 245-0300",
+   "toll_free": "(800) 342-1828",
+   "website": "http://dbs.myflorida.com/"
+  },
+  {
+   "state": "Georgia",
+   "code": "GA",
+   "type": "combined",
+   "name": "Georgia Vocational Rehabilitation Agency",
+   "phone": "(866) 489-0001",
+   "tty": "(404) 232-1998",
+   "website": "https://gvs.georgia.gov/"
+  },
+  {
+   "state": "Guam",
+   "code": "GU",
+   "type": "combined",
+   "name": "Division of Vocational Rehabilitation",
+   "phone": "(671) 475-4200",
+   "website": "http://disid.guam.gov/division-of-vocational-rehabilitation/"
+  },
+  {
+   "state": "Hawaii",
+   "code": "HI",
+   "type": "combined",
+   "name": "Division of Vocational Rehabilitation",
+   "phone": "(808) 586-9729",
+   "website": "http://humanservices.hawaii.gov/vocationalrehab/"
+  },
+  {
+   "state": "Idaho",
+   "code": "ID",
+   "type": "general",
+   "name": "Division of Vocational Rehabilitation",
+   "phone": "(208) 334-3390",
+   "website": "https://vr.idaho.gov/"
+  },
+  {
+   "state": "Idaho",
+   "code": "ID",
+   "type": "blind",
+   "name": "State Commission for the Blind and Visually Impaired",
+   "phone": "(208) 334-3220",
+   "toll_free": "(800) 542-8688",
+   "website": "http://icbvi.idaho.gov"
+  },
+  {
+   "state": "Illinois",
+   "code": "IL",
+   "type": "combined",
+   "name": "Division of Rehabilitation Services",
+   "toll_free": "(800) 843-6154",
+   "tty": "(800) 447-6404",
+   "website": "http://www.dhs.state.il.us/page.aspx?item=29727"
+  },
+  {
+   "state": "Indiana",
+   "code": "IN",
+   "type": "combined",
+   "name": "Bureau of Rehabilitation Services",
+   "toll_free": "(800) 545-7763",
+   "website": "https://www.in.gov/fssa/ddrs/2636.htm"
+  },
+  {
+   "state": "Iowa",
+   "code": "IA",
+   "type": "general",
+   "name": "Vocational Rehabilitation Services",
+   "phone": "(515) 281-4211",
+   "tty": "(515) 281-4211",
+   "website": "http://www.ivrs.iowa.gov/"
+  },
+  {
+   "state": "Iowa",
+   "code": "IA",
+   "type": "blind",
+   "name": "Department for the Blind",
+   "phone": "(515) 281-1333",
+   "toll_free": "(800) 362-2587",
+   "tty": "(515) 281-1355",
+   "website": "https://blind.iowa.gov/"
+  },
+  {
+   "state": "Kansas",
+   "code": "KS",
+   "type": "combined",
+   "name": "Department for Children and Families",
+   "phone": "(785) 368 -7471",
+   "toll_free": "(866) 213-9079",
+   "tty": "(785) 368-7478",
+   "website": "http://www.dcf.ks.gov/services/RS/Pages/Employment-Services.aspx"
+  },
+  {
+   "state": "Kentucky",
+   "code": "KY",
+   "type": "combined",
+   "name": "Office of Vocational Rehabilitation",
+   "phone": "(502) 782-3402",
+   "toll_free": "(800) 372-7172",
+   "website": "https://kcc.ky.gov/Vocational-Rehabilitation/Pages/Kentucky-Office-of-Vocational-Rehabilitation.aspx"
+  },
+  {
+   "state": "Louisiana",
+   "code": "LA",
+   "type": "combined",
+   "name": "Louisiana Rehabilitation Services",
+   "phone": "(225) 219-2225",
+   "toll_free": "(800) 737-2958",
+   "website": "http://www.laworks.net/workforcedev/lrs/lrs_rehabilitation.asp"
+  },
+  {
+   "state": "Maine",
+   "code": "ME",
+   "type": "general",
+   "name": "Division of Vocational Rehabilitation",
+   "phone": "(207) 623-7943",
+   "website": "http://www.maine.gov/rehab/dvr/"
+  },
+  {
+   "state": "Maine",
+   "code": "ME",
+   "type": "blind",
+   "name": "Division for the Blind and Visually Impaired",
+   "phone": "(207) 623-7954",
+   "website": "http://www.maine.gov/rehab/dbvi/"
+  },
+  {
+   "state": "Maryland",
+   "code": "MD",
+   "type": "combined",
+   "name": "Division of Rehabilitation Services",
+   "phone": "(410) 554-9442",
+   "toll_free": "(888) 554-0334",
+   "tty": "(410) 554-9411",
+   "website": "https://dors.maryland.gov/Pages/default.aspx"
+  },
+  {
+   "state": "Massachusetts",
+   "code": "MA",
+   "type": "general",
+   "name": "Massachusetts Rehabilitation Commission",
+   "phone": "(617) 204-3600",
+   "toll_free": "(800) 245-6543",
+   "tty": "(800) 245-6543",
+   "website": "https://www.mass.gov/vocational-rehabilitation"
+  },
+  {
+   "state": "Massachusetts",
+   "code": "MA",
+   "type": "blind",
+   "name": "Commission for the Blind",
+   "phone": "(617) 626-7509",
+   "toll_free": "(800) 392-6450",
+   "tty": "(800) 392-6556",
+   "website": "https://www.mass.gov/vocational-rehabilitation-vr-for-the-blind"
+  },
+  {
+   "state": "Michigan",
+   "code": "MI",
+   "type": "general",
+   "name": "Michigan Rehabilitation Services",
+   "phone": "(517) 582-3148",
+   "toll_free": "(800) 605-6722",
+   "tty": "Dial 711 and provide the relay operator with the toll free number (800) 605-6722",
+   "website": "https://www.michigan.gov/mrs"
+  },
+  {
+   "state": "Michigan",
+   "code": "MI",
+   "type": "blind",
+   "name": "Michigan Bureau of Services for Blind Persons",
+   "phone": "(517) 373-2062",
+   "toll_free": "(800) 292-4200",
+   "tty": "(888) 864-1212",
+   "website": "https://www.michigan.gov/bsbp"
+  },
+  {
+   "state": "Minnesota",
+   "code": "MN",
+   "type": "general",
+   "name": "Vocational Rehabilitation Services",
+   "phone": "(651) 259-7367",
+   "website": "https://mn.gov/deed/job-seekers/disabilities/"
+  },
+  {
+   "state": "Minnesota",
+   "code": "MN",
+   "type": "blind",
+   "name": "State Services for the Blind",
+   "phone": "(651) 642-0500",
+   "toll_free": "(800) 652-9000",
+   "tty": "(651) 642-0506",
+   "website": "https://mn.gov/deed/ssb/"
+  },
+  {
+   "state": "Mississippi",
+   "code": "MS",
+   "type": "combined",
+   "name": "Department of Rehabilitation Services",
+   "toll_free": "(800) 443-1000",
+   "website": "https://www.mdrs.ms.gov/"
+  },
+  {
+   "state": "Missouri",
+   "code": "MO",
+   "type": "general",
+   "name": "Missouri Vocational Rehabilitation",
+   "phone": "(573) 751-3251",
+   "toll_free": "(877) 222-8963",
+   "tty": "(573) 751-0881",
+   "website": "https://dese.mo.gov/adult-learning-rehabilitation-services/vocational-rehabilitation"
+  },
+  {
+   "state": "Missouri",
+   "code": "MO",
+   "type": "blind",
+   "name": "State Services for the Blind",
+   "phone": "(573) 751-4249",
+   "toll_free": "(800) 592-6004",
+   "website": "https://dss.mo.gov/fsd/rsb/"
+  },
+  {
+   "state": "Montana",
+   "code": "MT",
+   "type": "combined",
+   "name": "Montana Disability Employment and Transitions Division",
+   "phone": "(406) 444-4179",
+   "toll_free": "(877) 296-1197",
+   "tty": "(406) 444-2590",
+   "website": "https://dphhs.mt.gov/detd/vocrehab"
+  },
+  {
+   "state": "Nebraska",
+   "code": "NE",
+   "type": "general",
+   "name": "Division of Vocational Rehabilitation",
+   "phone": "(402) 471-3644",
+   "toll_free": "(877) 637-3422",
+   "website": "http://www.vr.nebraska.gov/"
+  },
+  {
+   "state": "Nebraska",
+   "code": "NE",
+   "type": "blind",
+   "name": "Commission for the Blind and Visually Impaired",
+   "phone": "(402) 471-2891",
+   "toll_free": "(877) 809-2419",
+   "website": "https://ncbvi.nebraska.gov/"
+  },
+  {
+   "state": "Nevada",
+   "code": "NV",
+   "type": "combined",
+   "name": "Southern Nevada Phone: (702) 486-5230",
+   "tty": "(702) 486-1018",
+   "website": "https://detr.nv.gov/Page/Rehabilitation_Division_Bureau_of_Vocational_Rehabilitation"
+  },
+  {
+   "state": "New Hampshire",
+   "code": "NH",
+   "type": "combined",
+   "name": "Division of Career Technology and Adult Learning",
+   "phone": "(603) 271-3471",
+   "toll_free": "(800) 299-1647",
+   "website": "https://www.education.nh.gov/who-we-are/deputy-commissioner/bureau-vocational-rehabilitation"
+  },
+  {
+   "state": "New Jersey",
+   "code": "NJ",
+   "type": "general",
+   "name": "Division of Vocational Rehabilitation Services",
+   "phone": "(609) 292-7318",
+   "website": "https://nj.gov/labor/career-services/special-services/individuals-with-disabilities/index.shtml"
+  },
+  {
+   "state": "New Jersey",
+   "code": "NJ",
+   "type": "blind",
+   "name": "Commission for the Blind and Visually Impaired",
+   "phone": "(973) 648-3333",
+   "toll_free": "(877) 685-8878",
+   "website": "http://www.state.nj.us/humanservices/cbvi/home/"
+  },
+  {
+   "state": "New Mexico",
+   "code": "NM",
+   "type": "general",
+   "name": "Division of Vocational Rehabilitation",
+   "phone": "(505) 954-8500 or (505) 954-8562",
+   "toll_free": "(800) 224-7005",
+   "website": "http://www.dvr.state.nm.us/"
+  },
+  {
+   "state": "New Mexico",
+   "code": "NM",
+   "type": "blind",
+   "name": "Commission for the Blind",
+   "phone": "(505) 827-4479",
+   "website": "https://www.cfb.state.nm.us/VR"
+  },
+  {
+   "state": "New York",
+   "code": "NY",
+   "type": "general",
+   "name": "Adult Career and Continuing Education Services",
+   "toll_free": "(800) 222-5627",
+   "website": "http://www.acces.nysed.gov/vr"
+  },
+  {
+   "state": "New York",
+   "code": "NY",
+   "type": "blind",
+   "name": "Commission for the Blind and Visually Handicapped",
+   "toll_free": "(866) 871-3000",
+   "tty": "(866) 871-6000",
+   "website": "https://ocfs.ny.gov/main/cb/"
+  },
+  {
+   "state": "North Carolina",
+   "code": "NC",
+   "type": "general",
+   "name": "Division of Employment and Independence for People with Disabilities",
+   "toll_free": "(800) 689-9090",
+   "tty": "(919) 855-3579",
+   "video_phone": "(919) 324-1500",
+   "website": "https://www.ncdhhs.gov/eipd"
+  },
+  {
+   "state": "North Carolina",
+   "code": "NC",
+   "type": "blind",
+   "name": "Division of Services for the Blind",
+   "phone": "(919) 527-6704",
+   "website": "https://www.ncdhhs.gov/divisions/dsb"
+  },
+  {
+   "state": "North Dakota",
+   "code": "ND",
+   "type": "combined",
+   "name": "Division of Vocational Rehabilitation",
+   "phone": "(701) 328-8950",
+   "toll_free": "(800) 755-2745",
+   "website": "https://www.hhs.nd.gov/vr"
+  },
+  {
+   "state": "Northern Marianas",
+   "code": "MP",
+   "type": "combined",
+   "name": "Office of Vocational Rehabilitation",
+   "phone": "(670) 322-6537",
+   "tty": "(670) 322-6449",
+   "website": "http://www.ovrgov.net/"
+  },
+  {
+   "state": "Ohio",
+   "code": "OH",
+   "type": "combined",
+   "name": "Opportunities for Ohioans with Disabilities",
+   "phone": "(866) 895-0058",
+   "website": "https://ood.ohio.gov/wps/portal/gov/ood/individuals-with-disabilities/services/vocational-rehabilitation"
+  },
+  {
+   "state": "Oklahoma",
+   "code": "OK",
+   "type": "combined",
+   "name": "Department of Rehabilitation Services",
+   "phone": "(405) 951-3400",
+   "toll_free": "(800) 845-8476",
+   "tty": "(405) 951-3400",
+   "website": "https://oklahoma.gov/okdrs/job-seekers/vr.html"
+  },
+  {
+   "state": "Oregon",
+   "code": "OR",
+   "type": "general",
+   "name": "Office of Vocational Rehabilitation Services",
+   "phone": "(503) 945-5880",
+   "toll_free": "(877) 277-0513",
+   "website": "http://www.oregon.gov/dhs/employment/VR/Pages/index.aspx"
+  },
+  {
+   "state": "Oregon",
+   "code": "OR",
+   "type": "blind",
+   "name": "State Commission for the Blind",
+   "phone": "(971) 673-1588",
+   "website": "http://www.oregon.gov/blind/Pages/index.aspx"
+  },
+  {
+   "state": "Pennsylvania",
+   "code": "PA",
+   "type": "combined",
+   "name": "Office of Vocational Rehabilitation",
+   "phone": "(717) 787-5476",
+   "toll_free": "(800) 442-6351",
+   "tty": "(717) 787-4885 or (866) 830-7327",
+   "website": "http://www.dli.pa.gov/individuals/disability-services/ovr/pages/default.aspx"
+  },
+  {
+   "state": "Puerto Rico",
+   "code": "PR",
+   "type": "combined",
+   "name": "Vocational Rehabilitation Administration",
+   "phone": "(787) 729-0160",
+   "tty": "(787) 268-3735",
+   "website": "http://www.arv.pr.gov/Pages/default.aspx"
+  },
+  {
+   "state": "Rhode Island",
+   "code": "RI",
+   "type": "combined",
+   "name": "Office of Rehabilitation Services",
+   "phone": "(401) 421-7005",
+   "tty": "(401) 421-7016",
+   "website": "http://www.ors.ri.gov/VR.html"
+  },
+  {
+   "state": "South Carolina",
+   "code": "SC",
+   "type": "general",
+   "name": "South Carolina Vocational Rehabilitation Department",
+   "toll_free": "(800) 832-7526",
+   "tty": "(803) 896-6553",
+   "website": "http://www.scvrd.net/"
+  },
+  {
+   "state": "South Carolina",
+   "code": "SC",
+   "type": "blind",
+   "name": "Commission for the Blind",
+   "phone": "(888) 335-5951 or (803) 898-8731",
+   "website": "http://www.sccb.state.sc.us/"
+  },
+  {
+   "state": "South Dakota",
+   "code": "SD",
+   "type": "general",
+   "name": "Division of Rehabilitation Services",
+   "phone": "(605) 773-3195",
+   "fax": "(605) 773-5483",
+   "website": "https://dhs.sd.gov/en/rehabilitation-services"
+  },
+  {
+   "state": "South Dakota",
+   "code": "SD",
+   "type": "blind",
+   "name": "Services for the Blind",
+   "phone": "(605) 773-4644",
+   "toll_free": "(800) 265-9684",
+   "website": "https://dhs.sd.gov/servicetotheblind/default.aspx"
+  },
+  {
+   "state": "Tennessee",
+   "code": "TN",
+   "type": "combined",
+   "name": "Division of Rehabilitation Services",
+   "phone": "(615) 313-4891",
+   "tty": "(615) 313-5695 or (800) 270-1349",
+   "website": "https://www.tn.gov/humanservices/ds/vocational-rehabilitation.html"
+  },
+  {
+   "state": "Texas",
+   "code": "TX",
+   "type": "combined",
+   "name": "Vocational Rehabilitation Services",
+   "toll_free": "(800) 628-5115",
+   "tty": "(866) 581-9328",
+   "website": "https://www.twc.texas.gov/jobseekers/vocational-rehabilitation-services"
+  },
+  {
+   "state": "Utah",
+   "code": "UT",
+   "type": "combined",
+   "name": "Utah State Office of Rehabilitation",
+   "phone": "(801) 535-3881",
+   "toll_free": "(866) 454-8397",
+   "tty": "(801) 887-09500",
+   "website": "https://jobs.utah.gov/usor/index.html"
+  },
+  {
+   "state": "Vermont",
+   "code": "VT",
+   "type": "general",
+   "name": "Vocational Rehabilitation Division",
+   "phone": "(802) 241-1455",
+   "toll_free": "(866) 879-6757",
+   "tty": "(802) 241-1455",
+   "website": "http://vocrehab.vermont.gov/"
+  },
+  {
+   "state": "Vermont",
+   "code": "VT",
+   "type": "blind",
+   "name": "Division of Services for the Blind and Visually Impaired",
+   "phone": "(800) 639-5861",
+   "website": "https://dbvi.vermont.gov/"
+  },
+  {
+   "state": "Virgin Islands",
+   "code": "VI",
+   "type": "combined",
+   "name": "Division of Disabilities and Vocational Rehabilitation Services",
+   "phone": "(340) 774-0930 Ext. 4283",
+   "tty": "(340) 776-2043",
+   "website": "http://www.dhs.gov.vi/disabilities/index.html"
+  },
+  {
+   "state": "Virginia",
+   "code": "VA",
+   "type": "general",
+   "name": "Department of Rehabilitative Services",
+   "phone": "(804) 662-7000",
+   "toll_free": "(800) 552-5019",
+   "tty": "(800) 464-9950",
+   "website": "https://www.dars.virginia.gov/"
+  },
+  {
+   "state": "Virginia",
+   "code": "VA",
+   "type": "blind",
+   "name": "Department for the Blind and Vision Impaired",
+   "phone": "(804) 371-3151",
+   "toll_free": "(800) 622-2155",
+   "website": "https://www.vdbvi.org/"
+  },
+  {
+   "state": "Washington",
+   "code": "WA",
+   "type": "general",
+   "name": "Division of Vocational Services",
+   "phone": "(360) 725-3610",
+   "toll_free": "(800) 637-5627",
+   "tty": "(800) 637-5627",
+   "website": "http://www.dshs.wa.gov/dvr/"
+  },
+  {
+   "state": "Washington",
+   "code": "WA",
+   "type": "blind",
+   "name": "Department of Services for the Blind",
+   "phone": "(800) 552-7103",
+   "website": "https://dsb.wa.gov/"
+  },
+  {
+   "state": "West Virginia",
+   "code": "WV",
+   "type": "combined",
+   "name": "Division of Rehabilitation Services",
+   "phone": "(304) 356-2060",
+   "toll_free": "(800) 642-8207",
+   "website": "http://www.wvdrs.org/"
+  },
+  {
+   "state": "Wisconsin",
+   "code": "WI",
+   "type": "combined",
+   "name": "Division of Vocational Rehabilitation",
+   "phone": "(608) 261-0050",
+   "toll_free": "(800) 442-3477",
+   "tty": "(888) 877-5939",
+   "website": "http://dwd.wisconsin.gov/dvr"
+  },
+  {
+   "state": "Wyoming",
+   "code": "WY",
+   "type": "combined",
+   "name": "Division of Vocational Rehabilitation",
+   "phone": "(307) 777-8650",
+   "website": "http://wyomingworkforce.org/workers/vr/"
+  }
+ ]
+}

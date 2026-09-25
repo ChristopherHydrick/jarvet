@@ -13,6 +13,7 @@ from app.benefits import BenefitsLibrary, source_label
 from app.ipeds import IpedsIndex
 from app.onet import OnetGraph
 from app.pathways import build_pathway, summary_for_model
+from app.state_help import StateHelp
 from app.programs import discover_admissions_page
 from app.va import VaComparison
 
@@ -326,6 +327,27 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "find_help_without_va_benefits",
+            "description": (
+                "Routes to training for a veteran the VA does not cover or does not fully cover: no GI "
+                "Bill (never qualified, used up, expired, other-than-honorable discharge), no VA "
+                "disability rating for VR&E, or wanting money on top of VA benefits. Returns the "
+                "state's vocational rehabilitation agency or agencies (contact, website, eligibility "
+                "rule, any current waiting-list notice) and federal routes (FAFSA/Pell, American Job "
+                "Center/WIOA training, apprenticeships, VA career counseling)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "state": {"type": "string", "description": "The veteran's state (name or two-letter code), or a city and state."},
+                },
+                "required": ["state"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_official_resources",
             "description": "Attach trusted official action links relevant to the user's need.",
             "parameters": {
@@ -348,10 +370,11 @@ class JarvetTools:
         self, onet: OnetGraph, va: VaComparison, ipeds: IpedsIndex,
         official_resources: dict[str, dict[str, str]], selected: dict[str, str] | None,
         provider_context: str, nationwide_requested: bool = False,
-        benefits: BenefitsLibrary | None = None,
+        benefits: BenefitsLibrary | None = None, state_help: StateHelp | None = None,
     ) -> None:
         self.onet = onet
         self.benefits = benefits
+        self.state_help = state_help
         self.va = va
         self.ipeds = ipeds
         self.official_resources = official_resources
@@ -369,6 +392,27 @@ class JarvetTools:
         # "Your path forward" section from the latest military-job search,
         # which the page renders above the cards (app/pathways.py).
         self.pathway: dict[str, Any] | None = None
+
+    def _help_without_va(self, state: str) -> dict[str, Any]:
+        """Non-VA routes to training for a state (app/state_help.py); the
+        agency sites and federal routes become links under the reply."""
+        if self.state_help is None:
+            return {"error": "State help data is not available right now."}
+        result = self.state_help.routes(state)
+        for agency in result.get("state_vr_agencies", []):
+            if agency.get("website"):
+                kind = {"blind": " (blindness and low vision)", "general": ""}.get(agency["type"], "")
+                self._add_resource({
+                    "label": f"{agency['name']}{kind} -- {agency['state']} vocational rehabilitation"[:120],
+                    "url": agency["website"], "kind": "state-help",
+                })
+        notice = result.get("state_vr_current_notice")
+        if notice and notice.get("apply_url"):
+            self._add_resource({"label": "Find a Department of Rehabilitation office (apply by phone or in person)",
+                                "url": notice["apply_url"], "kind": "state-help"})
+        for route in result.get("federal_routes", []):
+            self._add_resource({"label": route["name"], "url": route["url"], "kind": "state-help"})
+        return result
 
     def _search_benefits(self, questions: list[str]) -> dict[str, Any]:
         """Library passages for one or more benefits questions (app/benefits.py);
@@ -1332,6 +1376,9 @@ class JarvetTools:
                 ),
             }
 
+        if name == "find_help_without_va_benefits":
+            return self._help_without_va(str(arguments.get("state") or ""))
+
         if name == "search_benefits_info":
             questions = arguments.get("questions") or [arguments.get("question") or ""]
             if isinstance(questions, str):
@@ -1477,7 +1524,7 @@ async def run_agent(
     onet: OnetGraph, va: VaComparison, ipeds: IpedsIndex,
     official_resources: dict[str, dict[str, str]],
     base_url: str, api_key: str, model: str, safety_notes: list[str] | None = None,
-    benefits: BenefitsLibrary | None = None,
+    benefits: BenefitsLibrary | None = None, state_help: StateHelp | None = None,
 ) -> dict[str, Any]:
     provider_context = " ".join([
         messages[-1]["content"] if messages else "",
@@ -1488,11 +1535,12 @@ async def run_agent(
         onet, va, ipeds, official_resources, selected_occupation,
         provider_context,
         nationwide_requested=wants_nationwide_scope(messages[-1]["content"] if messages else ""),
-        benefits=benefits,
+        benefits=benefits, state_help=state_help,
     )
     system = f"""You are Jarvet, an agentic education and career facilitator for veterans. Solve the user's actual problem by deciding which tools to call, inspecting their results, and adapting your next step. Do not follow a fixed questionnaire.
 
 Operating principles:
+- Never leave a veteran at "you don't qualify." When the GI Bill or VR&E does not cover them -- no qualifying service, benefits used up or expired, an other-than-honorable discharge, or no VA disability rating -- or when they ask how else to pay, call find_help_without_va_benefits with their state (ask which state they live in if unknown) and walk them through the routes it returns: their state vocational rehabilitation agency (its disability test is the state's own and needs no VA rating -- conditions such as mental health conditions or chronic illness can count, and the state decides; say so plainly, including any waiting-list notice), FAFSA/Pell, their American Job Center, apprenticeships, and VA career counseling if they separated within the past year. Use search_benefits_info for more detail on any of them.
 - Safety comes before everything else. If the user mentions suicide, self-harm, or wanting to die, however indirectly, begin your reply with the Veterans Crisis Line: dial 988 then press 1, chat live at veteranscrisisline.net, or text 838255 (free, confidential, 24/7; 911 if in immediate danger). If they are homeless or about to lose their housing, begin with the National Call Center for Homeless Veterans, 877-424-3838 (free, 24/7). Then respond to the person with warmth before anything else.
 - Use tools for every factual claim about occupations, programs, providers, geography, VA approval, and benefits. Never invent results.
 - For any question about how a benefit works -- GI Bill chapters, eligibility, months of entitlement, payment and housing allowance rules or rates, Yellow Ribbon, VR&E, benefits for spouses and children, how to apply, or VA homeless and housing programs such as SSVF, HUD-VASH and Grant and Per Diem -- call search_benefits_info first -- with one short question per distinct part of what was asked (for example "Post-9/11 percentage for 24 months of service" and "housing allowance for online classes") -- and answer ONLY from the passages it returns, never from your own memory, since rules and rates change. Put it in plain language (regulations and provider guides are written for staff; say what they mean for the veteran), and name where it comes from in words, with its date (for example "according to VA.gov, updated July 2026"); the source links appear below your reply automatically. When asked whether a program pays for or helps with something, cover every related kind of help the passages show, including indirect help -- for example SSVF does not pay tuition, but its providers must help veterans obtain VA education and employment benefits, and it can pay job costs such as certifications, licenses, tools and uniforms -- rather than a flat "no". When passages disagree, a regulation outranks a web page, and a newer date outranks an older one; say "starting October 1, 2026" when a passage is a future rate. If the passages do not answer the question, say you could not find it in official sources and point to the right contact (VA education: 888-442-4551) instead of guessing. Jarvet cannot see the veteran's VA record, decide eligibility, or file anything: say "you may qualify" and "VA makes the final decision". VA disability claims and VA health care are outside Jarvet's scope: mention that they exist and suggest an accredited representative (a Veterans Service Organization) rather than advising.

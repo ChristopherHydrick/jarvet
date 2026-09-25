@@ -59,6 +59,13 @@ TOPICS: list[tuple[re.Pattern[str], Callable[[dict[str, Any]], bool]]] = [
      lambda row: "dependents-education-assistance" in row["url"] or "chapter-35" in row["url"]
      or "Dependents' Educational Assistance" in row["heading"]),
     (re.compile(r"\bfry\b", re.I), lambda row: "fry-scholarship" in row["url"]),
+    (re.compile(r"\bstate\b.*\b(?:vocational\s+)?rehab|\bdepartment of rehabilitation\b|\bdor\b|"
+                r"\border of selection\b", re.I),
+     lambda row: row["citation"].startswith("34 CFR 361.") or "dor.ca.gov" in row["url"]),
+    (re.compile(r"\bpell\b|\bfafsa\b|\bfederal student aid\b|\bfinancial aid\b", re.I),
+     lambda row: "studentaid.gov" in row["url"]),
+    (re.compile(r"\bwioa\b|\bamerican job center|\bcareeronestop\b", re.I),
+     lambda row: "careeronestop.org" in row["url"]),
     (re.compile(r"\byellow ribbon\b", re.I), lambda row: "yellow-ribbon" in row["url"] or "Yellow Ribbon" in row["heading"]),
 ]
 STOPWORDS = {

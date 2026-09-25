@@ -229,6 +229,14 @@ losing housing puts the National Call Center for Homeless Veterans
 `python scripts/check-counselor.py` checks both (`--no-app` skips the one
 chat call).
 
+Veterans the VA does not cover (no GI Bill, no VA rating) get routes from
+`find_help_without_va_benefits` (`app/state_help.py`): their state's vocational
+rehabilitation agency from `data/state-vr-agencies.json` (all 78 agencies,
+rebuilt with `python scripts/init-state-vr-agencies.py` from the Rehabilitation
+Services Administration's list -- re-run yearly), the federal eligibility rule
+in plain words, hand-checked current notices (California DOR's waiting list),
+and FAFSA/Pell, American Job Centers, apprenticeships and VA career counseling.
+
 ## School program data (IPEDS)
 
 Initialization downloads the NCES IPEDS institutional directory (HD2024) and
