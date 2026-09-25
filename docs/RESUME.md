@@ -32,14 +32,23 @@ Works for any AI coding assistant (Claude Code, Cursor, ...) or by hand.
    GOLF start journeys; new card HOTEL "Other ways to pay for training".
 
 ## Next steps (in order)
-1. Guided journeys: with the user's go, run ONE paid chat per finished journey
-   (1, 3, 5, 8) and check the answers (journey 1 must run both the benefits and
-   the program search); then build journeys 4 and 6 (data exists), a "change my
-   answer" button, and the paid journey check in check-counselor.py.
-2. Phase 1a leftovers (see the checklist): state tuition/fee aid (California
+1. SCHOLARSHIPS (user request 2026-09-25) -- plan shown to the user, WAITING for
+   their go: (a) hand-checked veteran scholarship list (data/scholarships.json,
+   each entry verified on its official page) + tool `find_scholarships`;
+   (b) every scholarship answer also links CareerOneStop's Scholarship Finder
+   pre-filtered (www.careeronestop.org/Toolkit/Training/find-scholarships.aspx?keyword=veteran
+   works: ~9,500 awards, 100 for "veteran"); (c) scam warning from official
+   sources; (d) a "Find scholarships" card/journey. CareerOneStop's Web API has
+   NO scholarship endpoint (checked the API explorer) -- ask them via "Data
+   Requests" once the user registers for the API key.
+2. Guided journeys: paid chats for journeys 1, 3, 5, 8 run 2026-09-25 (all ran the
+   right tools). Fix journey 5 from the A+ card (keyword "CompTIA A+" finds 0,
+   fallback pulls unrelated schools; 53 s). Then journeys 4 and 6, a "change my
+   answer" button, the paid journey check in check-counselor.py.
+3. Phase 1a leftovers (see the checklist): state tuition/fee aid (California
    College Promise Grant needs an official source that downloads), other states'
    VR notices, CareerOneStop API key (the user signs up) for a job-center directory.
-3. Phase 2: GI Bill rate tables and the "what would I get" calculator.
+4. Phase 2: GI Bill rate tables and the "what would I get" calculator.
 
 ## Rules that must be followed (they have prevented real damage)
 - **Database writes** (`.cache/va-comparison.sqlite`): stop the app first

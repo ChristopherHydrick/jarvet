@@ -256,8 +256,14 @@ journey forward; each journey gets its own automated check.
      request to /api/chat with `first_tool` (e.g. find_help_without_va_benefits).
      Journeys 1, 3, 5, 8 built; 1 hands off to 8; new card HOTEL.
    - [x] Free checks: 8 journey cases in check-counselor.py --no-app.
-   - [ ] Paid check: one chat per finished journey (user's go needed); watch
-     that the model runs both searches for journey 1 (benefits + programs).
+   - [x] Paid chats run 2026-09-25 for journeys 1, 3, 5, 8 (right first tools;
+     journey 1 ran benefits + programs). User feedback: with no VA benefits,
+     don't present "VA-approved programs" -- present schools as places to ask
+     their financial aid / veterans office about funding (fixed: journey 8
+     request + prompt rule; also "may not cover you", no dangling "Apply at").
+   - [ ] Journey 5 from the A+ card: "CompTIA A+" keyword finds 0 programs and the
+     fallback lists unrelated schools (HVAC, nurse aide) -- fix the search terms.
+   - [ ] Automated paid check (one chat per journey) in check-counselor.py.
    - [ ] Journeys 4, 6 (library data exists), 2 (phase 2), 7 (phase 3).
    - [ ] Nice to have: "change my answer" button; state names spelled out.
    - [ ] Build out: more sources as later phases need them (studentaid.gov in
@@ -267,6 +273,10 @@ journey forward; each journey gets its own automated check.
 3. [ ] **Housing and support services:** SSVF directory + ZIP-to-county,
    VA Facilities API (Vet Centers etc.), homeless programs, accredited reps.
 4. [ ] **VR&E** + the counselor interview (profile questions, screening).
+1c. [ ] **Scholarships (user request 2026-09-25, moved up from phase 5):** start
+   with veteran scholarships (hand-checked list, tool, scam warning, card),
+   then all scholarships via CareerOneStop's Scholarship Finder (pre-filtered
+   links now; its Web API has no scholarship endpoint -- ask via Data Requests).
 5. [ ] **Paying for school:** FAFSA/Pell, IPEDS net price, scholarships.
 6. [ ] **State free-college table** (Texas, California first, then all).
 7. [ ] Later/maybe: veteran sign-in for the Education Benefits API.
