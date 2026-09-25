@@ -53,6 +53,49 @@ prompt already forbids uncited benefit claims). Three kinds of knowledge:
      API (free key; verify terms) plus a short hand-checked list of trusted
      veteran scholarships.
 
+## Official guides and documents (PDFs, regulations)
+
+The benefits library should also hold official guides, handbooks and rules,
+not just web pages. PDFs are split into passages with the **page number**
+kept, so Jarvet can cite "SSVF Annual GHSA Update 2026, p. 4". Many are written
+for staff/providers, not veterans, so Jarvet must translate them into plain
+language; where a rule is in the regulation, the regulation wins. Text
+extraction with a PDF library in the jarvet-dev container (e.g. pypdf or
+pdfplumber); check tables come out readable.
+
+Where rules exist as regulations, prefer the free, clean **eCFR API**
+(ecfr.gov, current text of the Code of Federal Regulations) and **Federal
+Register API** (federalregister.gov, notices) over PDFs.
+
+SSVF (checked 2026-09-25 on the department.va.gov SSVF pages -- Compliance and
+Program Library sub-pages):
+- Current rules: 38 CFR Part 62 (via eCFR API) -- the Federal Register final
+  rules listed on the Compliance page (2010 through 2021) are its history.
+- FY2027 Notice of Funding Opportunity (Federal Register 2026-00009) -- the
+  current year's program priorities.
+- SSVF Annual GHSA Update 2026 (PDF):
+  https://department.va.gov/homeless/wp-content/uploads/sites/72/2026/09/SSVF_Annual_GHSA_Update_2026.pdf
+- SSVF Annual Report FY2024 (PDF):
+  https://department.va.gov/homeless/wp-content/uploads/sites/72/2026/04/SSVF_Annual_Report_FY2024.pdf
+- ~50 weekly "SSVF_Program_Update_[date].pdf" provider updates -- mostly
+  provider news; index only the latest few, if any.
+- A standalone **SSVF Program Guide** was not linked on those pages -- search
+  for it in phase 3 (it has historically been VA's main how-it-works guide:
+  eligibility, temporary financial assistance, rapid rehousing, prevention).
+
+Education / VR&E / financial aid (candidates to find and verify in phases 1-5):
+- 38 CFR Part 21 (VA education and VR&E rules) via eCFR API.
+- VA School Certifying Official Handbook (PDF) -- how schools certify GI Bill
+  enrollment; good for "why hasn't my payment come" questions.
+- VA GI Bill and VR&E fact sheets/pamphlets on va.gov and benefits.va.gov.
+- VR&E procedures manual (M28C) on KnowVA -- staff-facing; use carefully.
+- Federal Student Aid Handbook (fsapartners.ed.gov) and studentaid.gov guides
+  for FAFSA/Pell, including the military/veteran sections.
+- HUD-VASH and Grant and Per Diem program guides (housing phase).
+
+The monthly refresh should re-check these (new fiscal-year files, updated
+PDFs) and record each document's date, so answers can say how current they are.
+
 ## VA APIs (developer.va.gov catalog, checked 2026-09-25)
 
 Catalog JSON: https://developer.va.gov/platform-backend/v0/providers/transformations/legacy.json
@@ -137,7 +180,7 @@ and who to contact.
 
 ## Phases (checklist -- update as work is done)
 
-1. [ ] **Foundation + safety.** Check which VA.gov pages download cleanly (try
+1. [ ] **Foundation + safety.** Check which VA.gov pages and official PDFs/regulations (eCFR API) download cleanly (try
    sitemap https://www.va.gov/sitemap.xml; education, VR&E, housing/homeless
    sections), build the benefits library + `search_benefits_info` tool, crisis
    rules + server-side check, first accuracy checks. Show the user a sample
