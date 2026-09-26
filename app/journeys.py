@@ -83,6 +83,7 @@ SLOT_LABELS = {
     "health": "Health condition that makes working harder (no VA rating needed)",
     "ssdi": "Gets Social Security disability (SSI or SSDI)",
     "income": "Household income per year",
+    "household": "People in my household (including me)",
     "field": "What I want to do or study",
     "length": "How long I want to be in school",
     "location": "Where I live or want to study",
@@ -382,7 +383,9 @@ def compose_other_ways(answers: dict[str, str]) -> tuple[str, str | None]:
         "Look up the routes for my state and walk me through each one that fits my answers: "
         "my state's vocational rehabilitation agency (what it can pay for, how to apply, and that "
         "the state decides, not VA), FAFSA and Pell Grants, my American Job Center (WIOA "
-        "training money), apprenticeships, and free VA career counseling if it applies. Cite "
+        "training money), apprenticeships, any state tuition or fee waivers I may qualify for (compare "
+        "their income limits with my income and household size), and free VA career counseling if it "
+        "applies. Cite "
         "the official sources. Also check scholarships that fit me."
     )
     if _in_person(answers) and answers.get("field") not in ("explore", SKIP, UNSURE, None):
@@ -431,7 +434,8 @@ OTHER_WAYS = Journey(
         ),
         Question(
             "income", "Roughly what is your household's income per year? (Optional.)",
-            "Pell Grants and job-center (WIOA) training money are mainly for lower-income "
+            "Pell Grants, job-center (WIOA) training money and some state programs (like "
+            "California's free community college enrollment fees) are mainly for lower-income "
             "households. This answer stays in this conversation only.",
             options=[
                 Option("Under $30,000", "Under $30,000"),
@@ -440,6 +444,19 @@ OTHER_WAYS = Journey(
                 Option("Over $100,000", "Over $100,000"),
                 SKIP_OPTION,
             ],
+            free_text=True,
+        ),
+        Question(
+            "household", "How many people are in your household, counting you?",
+            "Income limits depend on household size. Count yourself, a spouse or partner, and "
+            "anyone who lives with you and gets more than half their support from you.",
+            options=[
+                Option("1", "Just me", r"^(?:just me|me|only me|one|1)$"),
+                Option("2", "2"), Option("3", "3"), Option("4", "4"),
+                Option("5 or more", "5 or more", r"^(?:[5-9]|1\d|five|six|seven|eight|nine|ten)\b"),
+                SKIP_OPTION,
+            ],
+            ask_if=lambda answers: answers.get("income") not in (SKIP, None),
             free_text=True,
         ),
         FIELD_QUESTION,

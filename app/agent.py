@@ -374,8 +374,10 @@ TOOL_SCHEMAS = [
                 "Bill (never qualified, used up, expired, other-than-honorable discharge), no VA "
                 "disability rating for VR&E, or wanting money on top of VA benefits. Returns the "
                 "state's vocational rehabilitation agency or agencies (contact, website, eligibility "
-                "rule, any current waiting-list notice) and federal routes (FAFSA/Pell, American Job "
-                "Center/WIOA training, apprenticeships, VA career counseling)."
+                "rule, any current waiting-list notice), state tuition and fee programs where Jarvet has "
+                "them (for example California's College Promise Grant, with its income limits), and "
+                "federal routes (FAFSA/Pell, American Job Center/WIOA training, apprenticeships, VA "
+                "career counseling)."
             ),
             "parameters": {
                 "type": "object",
@@ -473,6 +475,8 @@ class JarvetTools:
         if notice and notice.get("apply_url"):
             self._add_resource({"label": "Find a Department of Rehabilitation office (apply by phone or in person)",
                                 "url": notice["apply_url"], "kind": "state-help"})
+        for program in result.get("state_aid_programs", []):
+            self._add_resource({"label": program["name"][:120], "url": program["url"], "kind": "state-help"})
         for route in result.get("federal_routes", []):
             self._add_resource({"label": route["name"], "url": route["url"], "kind": "state-help"})
         return result
@@ -1607,7 +1611,7 @@ async def run_agent(
     system = f"""You are Jarvet, an agentic education and career facilitator for veterans. Solve the user's actual problem by deciding which tools to call, inspecting their results, and adapting your next step. Do not follow a fixed questionnaire.
 
 Operating principles:
-- Never leave a veteran at "you don't qualify." When the GI Bill or VR&E does not cover them -- no qualifying service, benefits used up or expired, an other-than-honorable discharge, or no VA disability rating -- or when they ask how else to pay, call find_help_without_va_benefits with their state (ask which state they live in if unknown) and walk them through the routes it returns: their state vocational rehabilitation agency (its disability test is the state's own and needs no VA rating -- conditions such as mental health conditions or chronic illness can count, and the state decides; say so plainly, including any waiting-list notice), FAFSA/Pell, their American Job Center, apprenticeships, and VA career counseling if they separated within the past year. Use search_benefits_info for more detail on any of them.
+- Never leave a veteran at "you don't qualify." When the GI Bill or VR&E does not cover them -- no qualifying service, benefits used up or expired, an other-than-honorable discharge, or no VA disability rating -- or when they ask how else to pay, call find_help_without_va_benefits with their state (ask which state they live in if unknown) and walk them through the routes it returns: their state vocational rehabilitation agency (its disability test is the state's own and needs no VA rating -- conditions such as mental health conditions or chronic illness can count, and the state decides; say so plainly, including any waiting-list notice), FAFSA/Pell, their American Job Center, apprenticeships, and VA career counseling if they separated within the past year. When it returns state aid programs, recommend each one the veteran may qualify for: for the California College Promise Grant (free community college enrollment fees), compare their household income and size with its income limits and recommend it whenever their income may be at or under the limit, they receive SSI, TANF/CalWORKs or General Assistance, or they are an AB 540 student with low income; if you don't know their income or household size, tell them the limit for their household size and suggest applying through the college's financial aid office anyway. Use search_benefits_info for more detail on any of them.
 - Scholarships: call find_scholarships (student, family situation, branch, level if known) and present only scholarships it returns -- never name one from memory. For each: who can apply, amount and timing in plain words, and that amounts and dates change every year so they should confirm on the sponsor's site. When a family member's situation is unknown, say which ones depend on it (only_if) or ask. Always point to the CareerOneStop Scholarship Finder search for all other scholarships, the school's financial aid and veterans offices, and the scam warning: never pay to apply for a scholarship. The Fry Scholarship and the Rogers STEM Scholarship are VA benefits -- use search_benefits_info for their rules.
 - When the veteran likely has no VA education benefits (no GI Bill, no VR&E), say the GI Bill or VR&E "may not cover you" and that VA makes the final decision -- never "you don't qualify". VA approval does not help them: the program tools only know schools on VA's GI Bill list, so present any schools you show as schools near them that teach what they want -- do not call them "VA-approved programs" or open with "Found N VA-approved ...". Tell them to contact each school's financial aid office (FAFSA/Pell, state grants and fee waivers, the school's own scholarships) and its veterans or military resource office, which often knows local funding options, and that their state vocational rehabilitation agency or American Job Center may work with other training providers too.
 - Safety comes before everything else. If the user mentions suicide, self-harm, or wanting to die, however indirectly, begin your reply with the Veterans Crisis Line: dial 988 then press 1, chat live at veteranscrisisline.net, or text 838255 (free, confidential, 24/7; 911 if in immediate danger). If they are homeless or about to lose their housing, begin with the National Call Center for Homeless Veterans, 877-424-3838 (free, 24/7). Then respond to the person with warmth before anything else.

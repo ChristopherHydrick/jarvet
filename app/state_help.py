@@ -56,6 +56,51 @@ STATE_NOTES: dict[str, dict[str, str]] = {
     },
 }
 
+# State tuition and fee programs, checked by hand against the official source
+# (dated). Income limits are the program's own table; compare them with the
+# veteran's household size and income before recommending.
+STATE_AID: dict[str, list[dict[str, Any]]] = {
+    "CA": [
+        {
+            "name": "California College Promise Grant (CCPG, formerly the BOG Fee Waiver)",
+            "what": (
+                "Waives enrollment fees at any California community college for eligible students. "
+                "It does not cover books or living costs -- the FAFSA or California Dream Act "
+                "Application can help with those. Apply through the college's financial aid office; "
+                "most waivers are processed within a week, and it must be renewed every school year."
+            ),
+            "who_can_apply": (
+                "California residents (lived in California at least one year), students eligible for "
+                "in-state tuition under AB 540 or AB 1899 or with a T or U visa, and California resident "
+                "homeless youth."
+            ),
+            "ways_to_qualify": [
+                "Income: household income in 2024 at or under the limit below for the household size "
+                "(150% of the federal poverty guideline).",
+                "Benefits: currently receiving monthly cash aid from TANF/CalWORKs, SSI/SSP or General "
+                "Assistance. (SSI counts here; SSDI does not -- SSDI is counted as income instead.)",
+                "Financial need shown on the FAFSA or California Dream Act Application, reviewed by the college.",
+                "Special cases, including dependents certified by CalVet or the National Guard Adjutant "
+                "General for a dependent's fee waiver, and Medal of Honor recipients and their children.",
+            ],
+            "veterans_note": (
+                "A veteran of the U.S. Armed Forces counts as an independent student on the application, "
+                "so the veteran's own household income is used, not their parents'."
+            ),
+            "income_limits_2026_27": {
+                "1": 23475, "2": 31725, "3": 39975, "4": 48225,
+                "5": 56475, "6": 64725, "7": 72975, "8": 81225, "each_additional": 8250,
+            },
+            "source": (
+                "California Community Colleges Chancellor's Office, 2026-27 CCPG application and Type B "
+                "income standards (5 CCR 58620) (checked 2026-09-25)"
+            ),
+            "url": "https://www.cccco.edu/-/media/CCCCO-Website/docs/application/2026-27-english-ccpg-application-a11y.pdf",
+            "income_limits_url": "https://www.cccco.edu/-/media/CCCCO-Website/docs/general/2026-27-ccpg-income-maximums-a11y.pdf",
+        },
+    ],
+}
+
 FEDERAL_ROUTES = [
     {
         "name": "FAFSA and Pell Grant",
@@ -140,12 +185,19 @@ class StateHelp:
             "state_vr_agencies_source": f"Rehabilitation Services Administration list (fetched {self.fetched})",
             "state_vr_rule": STATE_VR_RULE,
             "federal_routes": FEDERAL_ROUTES,
-            "state_aid": (
+        }
+        if code in STATE_AID:
+            result["state_aid_programs"] = STATE_AID[code]
+            result["state_aid_note"] = (
+                "Other state aid (for example state veteran programs) is not in Jarvet's data yet; "
+                "suggest the college's financial aid office and the state veterans agency."
+            )
+        else:
+            result["state_aid"] = (
                 "State tuition and fee programs (for example community college fee waivers and state "
                 "veteran programs) are not in Jarvet's data yet; suggest the college's financial aid "
                 "office and the state veterans agency."
-            ),
-        }
+            )
         if code in STATE_NOTES:
             result["state_vr_current_notice"] = STATE_NOTES[code]
         return result

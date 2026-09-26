@@ -554,6 +554,46 @@
           "I'm a veteran"
         ]
       }
+    },
+    {
+      "name": "journey 8, low income in California asks household size (College Promise Grant)",
+      "journey": "other-ways",
+      "steps": [
+        {
+          "slot": "state",
+          "text": "California"
+        },
+        {
+          "slot": "health",
+          "value": "no"
+        },
+        {
+          "slot": "income",
+          "value": "Under $30,000"
+        },
+        {
+          "slot": "household",
+          "text": "just me",
+          "options": [
+            "Just me",
+            "5 or more"
+          ]
+        },
+        {
+          "slot": "field",
+          "text": "welding"
+        }
+      ],
+      "expect": {
+        "kind": "done",
+        "journey": "other-ways",
+        "first_tool": "find_help_without_va_benefits",
+        "request": [
+          "Household income per year: Under $30,000",
+          "People in my household (including me): Just me",
+          "state tuition or fee waivers"
+        ]
+      }
     }
   ],
   "scholarships_total": 18,
