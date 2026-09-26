@@ -1,17 +1,23 @@
-# Resuming Jarvet (written 2026-09-25, end of the guided-journeys session)
+# Resuming Jarvet (written 2026-09-25, end of the journeys + scholarships session)
 
 Works for any AI coding assistant (Claude Code, Cursor, ...) or by hand.
 
 ## Where things stand
-- **Branch:** `related-programs-2026-09-25` (many commits ahead of `main`; not
-  pushed to origin, not merged). Push/merge only when the user says so.
-- **App:** Docker container `jarvet` -- LEFT RUNNING at the end of this session
-  (no database writes this session; last backup in `C:\Users\chris\jarvet-backups`
-  from the phase 1a session). If it is stopped: `docker start jarvet`; open
-  http://localhost:8000.
+- **Branch:** `related-programs-2026-09-25`, pushed to the user's fork
+  (github.com/ChristopherHydrick/jarvet, remote `fork`) as a backup. NOT pushed
+  to `origin` (wiki3-ai) and NOT merged into `main` -- only when the user says so.
+- **App:** Docker container `jarvet` -- LEFT STOPPED at the end of this session
+  (clean shutdown; integrity ok on va-comparison, ipeds, benefits-library,
+  chat-responses; -wal/-shm cleared; backup
+  `C:\Users\chris\jarvet-backups\va-comparison.20260925-174624.sqlite` + ipeds).
+  Start it with `docker start jarvet` and wait until http://localhost:8000
+  answers before running checks.
+- **Helpers kept in `.cache/`** (git-ignored): `_paid_journey_chats.py` (runs saved
+  journey answers through the app and one paid chat each), `_scholarship_fetch.py`
+  + `_scholarship_pages/` (sponsor pages as fetched on 2026-09-25, for re-checking).
 - **Plan and progress:** `docs/counselor-plan.md` (checklist at the bottom) and
-  `docs/user-journeys.md` (8 critical user journeys -- APPROVED; journey 7 is
-  "Housing Assistance"). Detailed session log: `.cache/session-notes-2026-09-25.md`.
+  `docs/user-journeys.md` (9 journeys -- APPROVED; journey 7 is "Housing
+  Assistance"; 1, 3, 5, 8, 9 built). Detailed session log: `.cache/session-notes-2026-09-25.md`.
 
 ## Done so far (counselor work)
 1. Safety: crisis line (988 press 1 / chat / text 838255) and homeless call
