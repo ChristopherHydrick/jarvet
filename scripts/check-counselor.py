@@ -13,6 +13,10 @@
   state  -- the state vocational rehabilitation directory (app/state_help.py,
             data/state-vr-agencies.json) has all 78 agencies and finds the
             right ones for saved places. Free.
+  scholarships -- the hand-checked scholarship list (data/scholarships.json)
+            is complete and well-formed, and saved searches find (and leave out)
+            the right scholarships. Free. With --links, also opens every
+            sponsor link and the Scholarship Finder (network, still free).
   journeys- the guided journeys (app/journeys.py): saved answers are sent
             to the running app's /api/journey one by one; each question must
             come in order (with its buttons), nothing known is asked again, and
@@ -130,6 +134,48 @@ def check_state_help(checks: dict) -> int:
     return failures
 
 
+def check_scholarships(checks: dict, links: bool) -> int:
+    from app.scholarships import LEVELS, SITUATIONS, STUDENTS, Scholarships
+    data = Scholarships()
+    data.load()
+    failures = 0
+    problems = []
+    if len(data.entries) != checks.get("scholarships_total", 18):
+        problems.append(f"{len(data.entries)} scholarships, expected {checks.get('scholarships_total')}")
+    for entry in data.entries:
+        if not entry["url"].startswith("https://") or not entry.get("checked"):
+            problems.append(f"{entry['id']}: needs an https link and a checked date")
+        bad = [v for v in entry["students"] if v not in STUDENTS] + [
+            v for v in entry["situations"] if v not in SITUATIONS] + [v for v in entry["levels"] if v not in LEVELS]
+        if bad:
+            problems.append(f"{entry['id']}: unknown values {bad}")
+    failures += bool(problems)
+    print(f"{'ok  ' if not problems else 'FAIL'}  scholarship list has {len(data.entries)} well-formed entries"
+          + (f" -- {'; '.join(problems)}" if problems else ""))
+    for case in checks.get("scholarships", []):
+        names = [entry["name"] for entry in data.find(**case["find"])["scholarships"]]
+        problems = [f"missing {name!r}" for name in case.get("include", []) if name not in names]
+        problems += [f"should not list {name!r}" for name in case.get("exclude", []) if name in names]
+        failures += bool(problems)
+        print(f"{'ok  ' if not problems else 'FAIL'}  scholarships {case['find']}"
+              + (f" -- {'; '.join(problems)}" if problems else ""))
+    if links:
+        urls = sorted({entry["url"] for entry in data.entries} | {
+            data.finder_link("veteran")["url"], data.data["scam_warning"]["url"]})
+        for url in urls:
+            request = urllib.request.Request(url, headers={"User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/128 Safari/537.36")})
+            try:
+                with urllib.request.urlopen(request, timeout=40) as response:
+                    ok, status = response.status == 200, response.status
+            except OSError as error:
+                ok, status = False, error
+            failures += not ok
+            print(f"{'ok  ' if ok else 'FAIL'}  link {url} ({status})")
+    return failures
+
+
 def post_json(url: str, payload: dict, timeout: float = 30) -> dict:
     request = urllib.request.Request(
         url, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"},
@@ -223,6 +269,7 @@ def main() -> int:
     parser.add_argument("--no-app", action="store_true", help="skip the chat (model) checks")
     parser.add_argument("--app-url", default="http://localhost:8000")
     parser.add_argument("--timeout", type=float, default=300)
+    parser.add_argument("--links", action="store_true", help="also open every scholarship link")
     parser.add_argument("--library-only", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     checks = json.loads(Path(args.checks).read_text(encoding="utf-8"))
@@ -230,6 +277,7 @@ def main() -> int:
         return 1 if check_library(checks) else 0
     failures = check_safety(checks)
     failures += check_state_help(checks)
+    failures += check_scholarships(checks, args.links)
     failures += check_library(checks)
     failures += check_journeys(checks, args.app_url)
     if not args.no_app:

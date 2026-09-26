@@ -18,6 +18,7 @@ from app import safety
 from app.agent import arrange_listings, run_agent
 from app.benefits import BenefitsLibrary, fastembed_reranker
 from app.journeys import FIRST_TOOLS, JOURNEYS, JourneyEngine
+from app.scholarships import Scholarships
 from app.state_help import StateHelp
 from app.cache import ResponseCache
 from app.ipeds import IpedsIndex
@@ -37,6 +38,8 @@ benefits_library = BenefitsLibrary(
 # State vocational rehabilitation agencies + federal routes for veterans the
 # VA does not cover (data/state-vr-agencies.json).
 state_help = StateHelp()
+# Hand-checked scholarships + Scholarship Finder link (data/scholarships.json).
+scholarships = Scholarships()
 # Guided journeys (app/journeys.py): questions asked by the app itself, with
 # places checked by the program search's own location resolver.
 journey_engine = JourneyEngine(
@@ -58,6 +61,7 @@ async def lifespan(_: FastAPI):
     ipeds_index.load()
     benefits_library.load()
     state_help.load()
+    scholarships.load()
     response_cache.load()
     try:
         yield
@@ -279,6 +283,7 @@ def health():
         "va_facilities": va_index.facility_count,
         "benefit_passages": benefits_library.passage_count,
         "benefits_library_fetched": benefits_library.info.get("fetched", ""),
+        "scholarships": len(scholarships.entries),
         "query_engine": "Oxigraph",
         "agent": "native-tool-calling",
         "model": os.getenv("LLM_MODEL", ""),
@@ -352,6 +357,7 @@ async def chat(request: ChatRequest, response: Response):
             benefits=benefits_library,
             state_help=state_help,
             first_tool=request.first_tool if request.first_tool in FIRST_TOOLS else None,
+            scholarships=scholarships,
         )
     except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as error:
         if concerns:

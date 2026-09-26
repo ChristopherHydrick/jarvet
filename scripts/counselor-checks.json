@@ -487,6 +487,153 @@
         "slot": "state",
         "note": "didn't recognize that state"
       }
+    },
+    {
+      "name": "scholarships journey, child of a fallen Marine",
+      "journey": "scholarships",
+      "steps": [
+        {
+          "slot": "student",
+          "text": "my daughter"
+        },
+        {
+          "slot": "situation",
+          "value": "fallen"
+        },
+        {
+          "slot": "branch",
+          "value": "Marine Corps"
+        },
+        {
+          "slot": "level",
+          "text": "trade school"
+        },
+        {
+          "slot": "field",
+          "text": "welding"
+        }
+      ],
+      "expect": {
+        "kind": "done",
+        "first_tool": "find_scholarships",
+        "request": [
+          "Who the student is: A child of a service member or veteran",
+          "Died in service",
+          "Marine Corps",
+          "Certificate or trade training",
+          "welding",
+          "Fry Scholarship"
+        ]
+      }
+    },
+    {
+      "name": "scholarships journey, a veteran skips the family question",
+      "journey": "scholarships",
+      "steps": [
+        {
+          "slot": "student",
+          "value": "veteran"
+        },
+        {
+          "slot": "branch",
+          "value": "unsure"
+        },
+        {
+          "slot": "level",
+          "value": "undergraduate"
+        },
+        {
+          "slot": "field",
+          "value": "explore"
+        }
+      ],
+      "expect": {
+        "kind": "done",
+        "first_tool": "find_scholarships",
+        "request": [
+          "I'm a veteran"
+        ]
+      }
+    }
+  ],
+  "scholarships_total": 18,
+  "scholarships": [
+    {
+      "find": {
+        "student": "veteran"
+      },
+      "include": [
+        "Tillman Scholars",
+        "Sport Clips Help A Hero Scholarship",
+        "AMVETS National Scholarships"
+      ],
+      "exclude": [
+        "Marine Corps Scholarship Foundation scholarships",
+        "Folds of Honor Higher Education Scholarship"
+      ]
+    },
+    {
+      "find": {
+        "student": "child",
+        "situation": "fallen"
+      },
+      "include": [
+        "American Legion Legacy Scholarship",
+        "Children of Fallen Patriots scholarships",
+        "Folds of Honor Higher Education Scholarship"
+      ],
+      "exclude": [
+        "Scholarships for Military Children",
+        "Tillman Scholars"
+      ]
+    },
+    {
+      "find": {
+        "student": "child",
+        "situation": "retired",
+        "branch": "Air Force"
+      },
+      "include": [
+        "General Henry H. Arnold Education Grant",
+        "Scholarships for Military Children"
+      ],
+      "exclude": [
+        "Maj. Gen. James Ursano Scholarship for Dependent Children",
+        "American Legion Legacy Scholarship"
+      ]
+    },
+    {
+      "find": {
+        "student": "spouse",
+        "branch": "Army"
+      },
+      "include": [
+        "Mrs. Patty Shinseki Spouse Scholarship",
+        "Tillman Scholars"
+      ],
+      "exclude": [
+        "Navy-Marine Corps Relief Society Education Assistance"
+      ]
+    },
+    {
+      "find": {
+        "student": "veteran",
+        "has_va_benefit": false
+      },
+      "exclude": [
+        "Edith Nourse Rogers STEM Scholarship"
+      ]
+    },
+    {
+      "find": {
+        "student": "grandchild"
+      },
+      "include": [
+        "AMVETS National Scholarships"
+      ],
+      "exclude": [
+        "Tillman Scholars"
+      ]
     }
   ]
 }

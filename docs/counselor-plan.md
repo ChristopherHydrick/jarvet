@@ -273,10 +273,31 @@ journey forward; each journey gets its own automated check.
 3. [ ] **Housing and support services:** SSVF directory + ZIP-to-county,
    VA Facilities API (Vet Centers etc.), homeless programs, accredited reps.
 4. [ ] **VR&E** + the counselor interview (profile questions, screening).
-1c. [ ] **Scholarships (user request 2026-09-25, moved up from phase 5):** start
+1c. [~] **Scholarships (user request 2026-09-25, moved up from phase 5):** start
    with veteran scholarships (hand-checked list, tool, scam warning, card),
    then all scholarships via CareerOneStop's Scholarship Finder (pre-filtered
    links now; its Web API has no scholarship endpoint -- ask via Data Requests).
+   - [x] 2026-09-25: data/scholarships.json -- 18 national scholarships, each read
+     on the sponsor's page (Tillman, SVA partners, VFW Sport Clips, AMVETS, Folds
+     of Honor, Fisher House x2, American Legion Legacy, AER spouse + children,
+     NMCRS, AFAS Arnold, MCSF, MOAA, Hope For The Warriors, Children of Fallen
+     Patriots, Freedom Alliance, VA Rogers STEM). Left out (could not verify on the
+     official page): Purple Heart (closed, no rules shown), ThanksUSA (page is
+     general articles), AFCEA, Horatio Alger, NMFA spouse scholarships.
+   - [x] app/scholarships.py + tool find_scholarships (rules-based filter by
+     student, family situation, branch, level; forced for "scholarship" messages
+     except Fry/STEM, which are VA benefits); every answer links the
+     CareerOneStop Scholarship Finder pre-filtered ("veteran", "military",
+     "military spouse", "military dependent") and the FTC scam page.
+   - [x] Journey "Find scholarships" (card INDIA): student / family situation /
+     branch / level / field; families of the fallen or disabled also get the Fry
+     Scholarship and Chapter 35 (cited from the library).
+   - [x] Checks: list well-formed, 6 search cases, 2 journey cases; `--links`
+     opens all 20 links (all 200 on 2026-09-25).
+   - [ ] More scholarships: state veteran scholarships (with phase 6), branch
+     associations (e.g. AFCEA, NMFA) once verified; yearly re-check of amounts
+     and dates (add to monthly refresh: `check-counselor.py --links`).
+   - [ ] CareerOneStop Data Request for scholarship data (after API key).
 5. [ ] **Paying for school:** FAFSA/Pell, IPEDS net price, scholarships.
 6. [ ] **State free-college table** (Texas, California first, then all).
 7. [ ] Later/maybe: veteran sign-in for the Education Benefits API.

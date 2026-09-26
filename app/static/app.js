@@ -142,6 +142,7 @@ const missionJourneys = {
   },
   "Find degrees for high-demand jobs related to my MOS.": { id: "mos" },
   "Show me other ways to pay for training.": { id: "other-ways" },
+  "Help me find scholarships.": { id: "scholarships" },
 };
 
 function appendLinkedText(element, content, resources) {

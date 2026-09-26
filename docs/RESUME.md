@@ -30,17 +30,18 @@ Works for any AI coding assistant (Claude Code, Cursor, ...) or by hand.
    request to the chat with the tool to run first. Journey 1 hands off to 8
    when the GI Bill likely doesn't cover the veteran. Cards ALPHA, DELTA, ECHO,
    GOLF start journeys; new card HOTEL "Other ways to pay for training".
+5. Scholarships (`data/scholarships.json`, 18 hand-checked; `app/scholarships.py`;
+   tool `find_scholarships`; journey + card INDIA "Find scholarships"): matching
+   scholarships, a pre-filtered CareerOneStop Scholarship Finder link for all
+   others, the FTC scam warning; families of the fallen/disabled also get Fry and
+   Chapter 35. With no VA benefits, schools are shown as places to ask about
+   funding, not as "VA-approved programs".
 
 ## Next steps (in order)
-1. SCHOLARSHIPS (user request 2026-09-25) -- plan shown to the user, WAITING for
-   their go: (a) hand-checked veteran scholarship list (data/scholarships.json,
-   each entry verified on its official page) + tool `find_scholarships`;
-   (b) every scholarship answer also links CareerOneStop's Scholarship Finder
-   pre-filtered (www.careeronestop.org/Toolkit/Training/find-scholarships.aspx?keyword=veteran
-   works: ~9,500 awards, 100 for "veteran"); (c) scam warning from official
-   sources; (d) a "Find scholarships" card/journey. CareerOneStop's Web API has
-   NO scholarship endpoint (checked the API explorer) -- ask them via "Data
-   Requests" once the user registers for the API key.
+1. Scholarships: veteran list BUILT (see Done 5). Next: state veteran
+   scholarships with phase 6, more verified national ones, yearly re-check
+   (`python scripts/check-counselor.py --no-app --links`), and a CareerOneStop
+   Data Request for scholarship data once the user has the API key.
 2. Guided journeys: paid chats for journeys 1, 3, 5, 8 run 2026-09-25 (all ran the
    right tools). Fix journey 5 from the A+ card (keyword "CompTIA A+" finds 0,
    fallback pulls unrelated schools; 53 s). Then journeys 4 and 6, a "change my
@@ -68,7 +69,8 @@ Works for any AI coding assistant (Claude Code, Cursor, ...) or by hand.
 
 ## Checks (run after starting the app)
     python scripts/check-search-counts.py --db-only   # 17 search checks, free
-    python scripts/check-counselor.py --no-app        # safety, state help, library, journeys; free
+    python scripts/check-counselor.py --no-app        # safety, state help, scholarships, library, journeys; free
+    python scripts/check-counselor.py --no-app --links  # + opens every scholarship link
     python scripts/check-counselor.py                 # + 1 chat call (costs model credits)
 Windows Python; the library checks run themselves inside the `jarvet` container.
 

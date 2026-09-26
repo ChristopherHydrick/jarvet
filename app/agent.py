@@ -13,6 +13,7 @@ from app.benefits import BenefitsLibrary, source_label
 from app.ipeds import IpedsIndex
 from app.onet import OnetGraph
 from app.pathways import build_pathway, summary_for_model
+from app.scholarships import Scholarships
 from app.state_help import StateHelp
 from app.programs import discover_admissions_page
 from app.va import VaComparison
@@ -101,6 +102,16 @@ SCHOOL_SEARCH_HINTS = re.compile(
     r"apprenticeships?|near\s+(?:me|\w+)|within\s+\d+|miles?)\b",
     re.I,
 )
+
+
+# "Are there scholarships for my kids?" -> find_scholarships first. The Fry
+# and Rogers STEM "scholarships" are VA benefits (search_benefits_info).
+SCHOLARSHIP_HINTS = re.compile(r"\bscholarships?\b", re.I)
+VA_SCHOLARSHIP_NAMES = re.compile(r"\b(?:fry|stem|rogers)\s+scholarship\b", re.I)
+
+
+def wants_scholarships(message: str) -> bool:
+    return bool(message) and bool(SCHOLARSHIP_HINTS.search(message)) and not VA_SCHOLARSHIP_NAMES.search(message)
 
 
 def wants_benefits_info(message: str) -> bool:
@@ -327,6 +338,36 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "find_scholarships",
+            "description": (
+                "Scholarships for veterans, service members, spouses, surviving spouses, children and "
+                "grandchildren, from Jarvet's hand-checked list (each read on the sponsor's own page), "
+                "filtered by who the student is, the military member's situation, branch and level. "
+                "Also returns a link to search all ~9,500 scholarships in the Labor Department's "
+                "CareerOneStop Scholarship Finder, and the FTC's scam warning. Pass only what the "
+                "veteran said; leave unknown fields empty."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "student": {"type": "string", "enum": [
+                        "veteran", "service_member", "spouse", "surviving_spouse", "child", "grandchild", ""]},
+                    "situation": {"type": "string", "enum": [
+                        "serving", "retired", "veteran", "disabled", "fallen", ""],
+                        "description": "For a family member: the military member's situation (disabled = "
+                                       "service-connected disability; fallen = died in service or from a "
+                                       "service-connected cause)."},
+                    "branch": {"type": "string", "description": "Branch, if known."},
+                    "level": {"type": "string", "enum": ["certificate", "undergraduate", "graduate", ""]},
+                    "field": {"type": "string", "description": "Field of study, if known."},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "find_help_without_va_benefits",
             "description": (
                 "Routes to training for a veteran the VA does not cover or does not fully cover: no GI "
@@ -371,8 +412,10 @@ class JarvetTools:
         official_resources: dict[str, dict[str, str]], selected: dict[str, str] | None,
         provider_context: str, nationwide_requested: bool = False,
         benefits: BenefitsLibrary | None = None, state_help: StateHelp | None = None,
+        scholarships: Scholarships | None = None,
     ) -> None:
         self.onet = onet
+        self.scholarships = scholarships
         self.benefits = benefits
         self.state_help = state_help
         self.va = va
@@ -392,6 +435,26 @@ class JarvetTools:
         # "Your path forward" section from the latest military-job search,
         # which the page renders above the cards (app/pathways.py).
         self.pathway: dict[str, Any] | None = None
+
+    def _find_scholarships(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Matching scholarships (app/scholarships.py); each sponsor's page,
+        the filtered Scholarship Finder search and the FTC scam page become
+        links under the reply."""
+        if self.scholarships is None:
+            return {"error": "Scholarship data is not available right now."}
+        result = self.scholarships.find(
+            student=str(arguments.get("student") or ""), situation=str(arguments.get("situation") or ""),
+            branch=str(arguments.get("branch") or ""), level=str(arguments.get("level") or ""),
+            field=str(arguments.get("field") or ""),
+        )
+        for entry in result["scholarships"]:
+            self._add_resource({"label": f"{entry['name']} ({entry['sponsor']})"[:120],
+                                "url": entry["url"], "kind": "scholarship"})
+        finder = result["all_scholarships"]
+        self._add_resource({"label": finder["label"], "url": finder["url"], "kind": "scholarship"})
+        warning = result["scam_warning"]
+        self._add_resource({"label": "Avoid scholarship scams (FTC)", "url": warning["url"], "kind": "scholarship"})
+        return result
 
     def _help_without_va(self, state: str) -> dict[str, Any]:
         """Non-VA routes to training for a state (app/state_help.py); the
@@ -1379,6 +1442,9 @@ class JarvetTools:
         if name == "find_help_without_va_benefits":
             return self._help_without_va(str(arguments.get("state") or ""))
 
+        if name == "find_scholarships":
+            return self._find_scholarships(arguments)
+
         if name == "search_benefits_info":
             questions = arguments.get("questions") or [arguments.get("question") or ""]
             if isinstance(questions, str):
@@ -1525,7 +1591,7 @@ async def run_agent(
     official_resources: dict[str, dict[str, str]],
     base_url: str, api_key: str, model: str, safety_notes: list[str] | None = None,
     benefits: BenefitsLibrary | None = None, state_help: StateHelp | None = None,
-    first_tool: str | None = None,
+    first_tool: str | None = None, scholarships: Scholarships | None = None,
 ) -> dict[str, Any]:
     provider_context = " ".join([
         messages[-1]["content"] if messages else "",
@@ -1536,12 +1602,13 @@ async def run_agent(
         onet, va, ipeds, official_resources, selected_occupation,
         provider_context,
         nationwide_requested=wants_nationwide_scope(messages[-1]["content"] if messages else ""),
-        benefits=benefits, state_help=state_help,
+        benefits=benefits, state_help=state_help, scholarships=scholarships,
     )
     system = f"""You are Jarvet, an agentic education and career facilitator for veterans. Solve the user's actual problem by deciding which tools to call, inspecting their results, and adapting your next step. Do not follow a fixed questionnaire.
 
 Operating principles:
 - Never leave a veteran at "you don't qualify." When the GI Bill or VR&E does not cover them -- no qualifying service, benefits used up or expired, an other-than-honorable discharge, or no VA disability rating -- or when they ask how else to pay, call find_help_without_va_benefits with their state (ask which state they live in if unknown) and walk them through the routes it returns: their state vocational rehabilitation agency (its disability test is the state's own and needs no VA rating -- conditions such as mental health conditions or chronic illness can count, and the state decides; say so plainly, including any waiting-list notice), FAFSA/Pell, their American Job Center, apprenticeships, and VA career counseling if they separated within the past year. Use search_benefits_info for more detail on any of them.
+- Scholarships: call find_scholarships (student, family situation, branch, level if known) and present only scholarships it returns -- never name one from memory. For each: who can apply, amount and timing in plain words, and that amounts and dates change every year so they should confirm on the sponsor's site. When a family member's situation is unknown, say which ones depend on it (only_if) or ask. Always point to the CareerOneStop Scholarship Finder search for all other scholarships, the school's financial aid and veterans offices, and the scam warning: never pay to apply for a scholarship. The Fry Scholarship and the Rogers STEM Scholarship are VA benefits -- use search_benefits_info for their rules.
 - When the veteran likely has no VA education benefits (no GI Bill, no VR&E), say the GI Bill or VR&E "may not cover you" and that VA makes the final decision -- never "you don't qualify". VA approval does not help them: the program tools only know schools on VA's GI Bill list, so present any schools you show as schools near them that teach what they want -- do not call them "VA-approved programs" or open with "Found N VA-approved ...". Tell them to contact each school's financial aid office (FAFSA/Pell, state grants and fee waivers, the school's own scholarships) and its veterans or military resource office, which often knows local funding options, and that their state vocational rehabilitation agency or American Job Center may work with other training providers too.
 - Safety comes before everything else. If the user mentions suicide, self-harm, or wanting to die, however indirectly, begin your reply with the Veterans Crisis Line: dial 988 then press 1, chat live at veteranscrisisline.net, or text 838255 (free, confidential, 24/7; 911 if in immediate danger). If they are homeless or about to lose their housing, begin with the National Call Center for Homeless Veterans, 877-424-3838 (free, 24/7). Then respond to the person with warmth before anything else.
 - Use tools for every factual claim about occupations, programs, providers, geography, VA approval, and benefits. Never invent results.
@@ -1623,6 +1690,8 @@ Preserve valid profile facts, update direct user corrections, and do not infer s
     )
     # A finished guided journey (app/journeys.py) names the tool its composed
     # request needs first, e.g. find_help_without_va_benefits for journey 8.
+    if scholarships is not None and wants_scholarships(latest_message) and not force_program_search:
+        forced_program_tool = "find_scholarships"
     if first_tool:
         forced_program_tool = first_tool
 

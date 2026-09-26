@@ -76,6 +76,9 @@ SLOT_LABELS = {
     "code": "Military job code",
     "branch": "Branch",
     "duties": "What I did in the military",
+    "student": "Who the student is",
+    "situation": "The service member's or veteran's situation",
+    "level": "Level of study",
     "state": "State I live in",
     "health": "Health condition that makes working harder (no VA rating needed)",
     "ssdi": "Gets Social Security disability (SSI or SSDI)",
@@ -380,7 +383,7 @@ def compose_other_ways(answers: dict[str, str]) -> tuple[str, str | None]:
         "my state's vocational rehabilitation agency (what it can pay for, how to apply, and that "
         "the state decides, not VA), FAFSA and Pell Grants, my American Job Center (WIOA "
         "training money), apprenticeships, and free VA career counseling if it applies. Cite "
-        "the official sources."
+        "the official sources. Also check scholarships that fit me."
     )
     if _in_person(answers) and answers.get("field") not in ("explore", SKIP, UNSURE, None):
         request += (
@@ -444,8 +447,86 @@ OTHER_WAYS = Journey(
     compose_other_ways,
 )
 
-JOURNEYS = {journey.id: journey for journey in (START, MOS, STUDY, OTHER_WAYS)}
+# --- Scholarships -----------------------------------------------------------------
+
+
+def compose_scholarships(answers: dict[str, str]) -> tuple[str, str | None]:
+    request = (
+        "Find scholarships for me.\n"
+        f"{situation(answers)}\n"
+        "Show the ones that fit, with who can apply, how much and when, and tell me how to search all "
+        "other scholarships and how to avoid scholarship scams."
+    )
+    if answers.get("student") in FAMILY + ("surviving_spouse",) and (
+        answers.get("situation") in ("fallen", "disabled") or answers.get("student") == "surviving_spouse"
+    ):
+        request += (
+            "\nAlso tell me about VA education benefits for families of service members who died or were "
+            "disabled (the Fry Scholarship and Survivors' and Dependents' Educational Assistance, Chapter 35), "
+            "citing the official sources."
+        )
+    return request, "find_scholarships"
+
+
+FAMILY = ("spouse", "child", "grandchild")
+
+SCHOLARSHIPS = Journey(
+    "scholarships", "Find scholarships",
+    "Scholarships are free money you don't pay back, and many are just for veterans and military "
+    "families. A few quick questions so I can find the ones that fit.",
+    [
+        Question(
+            "student", "Who is the student?",
+            "Many scholarships are only for veterans, or only for spouses or children.",
+            options=[
+                Option("veteran", "I'm a veteran", r"\bveteran\b"),
+                Option("service_member", "I'm still serving", r"\bserving\b|\bactive\b|\bguard\b|\breserv"),
+                Option("spouse", "A spouse of a service member or veteran", r"\bspouse\b|\bwife\b|\bhusband\b"),
+                Option("surviving_spouse", "A surviving spouse", r"\bsurviv|\bwidow"),
+                Option("child", "A child of a service member or veteran", r"\bchild|\bson\b|\bdaughter|\bkid"),
+                Option("grandchild", "A grandchild", r"\bgrand"),
+            ],
+        ),
+        Question(
+            "situation", "What is the service member's or veteran's situation?",
+            "Some scholarships are only for families of service members who were disabled or died "
+            "in service.",
+            options=[
+                Option("serving", "Still serving (active, Guard or Reserve)", r"\bserving\b|\bactive\b"),
+                Option("retired", "Retired from the military", r"\bretire"),
+                Option("veteran", "Separated (a veteran, not retired)", r"\bseparat|\bveteran\b"),
+                Option("disabled", "Has a service-connected disability", r"\bdisab|\brating\b|\binjur"),
+                Option("fallen", "Died in service or from a service-connected cause", r"\bdied\b|\bkilled\b|\bfallen\b|\bpassed"),
+                NOT_SURE,
+            ],
+            ask_if=lambda answers: answers.get("student") in FAMILY,
+        ),
+        Question(
+            "branch", "Which branch (the student's, or the family member's)?",
+            "Each branch's aid society has its own scholarships.",
+            options=[Option(name, name) for name in (
+                "Army", "Navy", "Air Force", "Marine Corps", "Coast Guard", "Space Force",
+            )] + [NOT_SURE],
+            free_text=True,
+        ),
+        Question(
+            "level", "What kind of school?",
+            "Some scholarships are only for college degrees; others cover trade school or graduate school.",
+            options=[
+                Option("certificate", "Certificate or trade training", r"\bcert|\btrade|\bvocational"),
+                Option("undergraduate", "College (associate or bachelor's)", r"\bcollege\b|\bassociate|\bbachelor|\bundergrad"),
+                Option("graduate", "Graduate school", r"\bgrad(?:uate)? school|\bmaster|\bdoctor|\bphd\b|\blaw school|\bmedical school"),
+                NOT_SURE,
+            ],
+        ),
+        FIELD_QUESTION,
+    ],
+    compose_scholarships,
+)
+
+JOURNEYS = {journey.id: journey for journey in (START, MOS, STUDY, OTHER_WAYS, SCHOLARSHIPS)}
 FIRST_TOOLS = {
+    "find_scholarships",
     "search_benefits_info", "find_help_without_va_benefits",
     "find_va_programs_for_military_job", "find_va_programs",
 }

@@ -1,6 +1,6 @@
 # Jarvet critical user journeys (approved 2026-09-25; journey 7 renamed "Housing Assistance")
 
-**Build status (2026-09-25):** journeys **1, 3, 5 and 8 are built** as guided
+**Build status (2026-09-25):** journeys **1, 3, 5, 8 and 9 (scholarships) are built** as guided
 questions (app/journeys.py, /api/journey, cards ALPHA, GOLF, DELTA/ECHO and the
 new HOTEL card "Other ways to pay for training"); journey 1 hands off to 8.
 Still to build: 2 (with the phase 2 calculator), 7 (with the phase 3 SSVF
@@ -204,6 +204,19 @@ or anyone who wants to add non-VA money on top of VA benefits.
   off to journey 4; matching schools -- hands off to journey 5.
 **Shows off:** state VR directory, federal/state aid in the library, screening
 without VA benefits, links to the school and training journeys.
+
+## 9. "Find scholarships" (card INDIA, added 2026-09-25 at the user's request) -- BUILT
+**Who:** a veteran, service member, spouse, surviving spouse, child or grandchild.
+**Questions:** who is the student; the service member's or veteran's situation
+(only for family members: serving / retired / separated / service-connected
+disability / died in service); branch; kind of school (certificate or trade /
+college / graduate); what they want to study.
+**Ends with:** matching scholarships from Jarvet's hand-checked list (who can
+apply, amount, timing, "confirm on the sponsor's site"), a link to search all
+~9,500 scholarships in the CareerOneStop Scholarship Finder, the FTC scam
+warning (never pay to apply), the school's financial aid and veterans offices,
+and -- for families of the fallen or disabled -- the Fry Scholarship and
+Chapter 35 (cited).
 
 ## How each journey is checked
 Built (free, no model): `python scripts/check-counselor.py --no-app` runs the
